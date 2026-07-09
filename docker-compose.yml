@@ -1,0 +1,55 @@
+name: hse-tarjeta-digital
+
+services:
+  # Orquestador: recibe el webhook de Twilio, llama al LLM y persiste vía la API del dashboard
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=${TZ:-America/Argentina/Buenos_Aires}
+      - TZ=${TZ:-America/Argentina/Buenos_Aires}
+      - N8N_SECURE_COOKIE=false                  # acceso por http://localhost en la LAN
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false       # los nodos Code leen $env (claves, secreto de hash)
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto       # HMAC del teléfono en "Preparar contexto"
+      - WEBHOOK_URL=${PUBLIC_URL:-http://localhost:5678/}
+      # variables que consume el workflow:
+      - TWILIO_SID=${TWILIO_SID}
+      - TWILIO_TOKEN=${TWILIO_TOKEN}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_VISION_MODEL=${GROQ_VISION_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
+      - GROQ_TEXT_MODEL=${GROQ_TEXT_MODEL:-llama-3.3-70b-versatile}
+      - HASH_SECRET=${HASH_SECRET}
+      - API_URL=http://dashboard:3000
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  # API + tablero de comando + SQLite
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - DB_PATH=/data/hse.db
+      - MEDIA_DIR=/data/media
+      - SEED_DEMO=${SEED_DEMO:-true}
+      - SESSION_TTL_MIN=${SESSION_TTL_MIN:-120}
+    volumes:
+      - hse_data:/data
+
+  # Túnel para que Twilio alcance a n8n en la Mac mini (imprime la URL pública en sus logs):
+  #   docker compose logs cloudflared | grep trycloudflare
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://n8n:5678
+    depends_on:
+      - n8n
+
+volumes:
+  n8n_data:
+  hse_data:
