@@ -1,0 +1,15 @@
+{
+  "name": "hse-tarjeta-digital-dashboard",
+  "version": "0.1.0",
+  "description": "API + tablero de comando para observaciones HSE (Tarjeta Digital)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "chart.js": "^4.4.9",
+    "express": "^4.21.2"
+  }
+}

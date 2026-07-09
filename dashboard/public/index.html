@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablero HSE — Tarjeta Digital</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦺</text></svg>">
+<script src="/vendor/chart.umd.js"></script>
+<style>
+  :root {
+    --page: #f9f9f7; --surface: #fcfcfb;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;         /* azul: categorías + tendencia */
+    --series-2: #1baf7a;         /* aqua: sectores */
+    --st-good: #0ca30c; --st-warn: #fab219; --st-crit: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0d0d0d; --surface: #1a1a19;
+      --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5; --series-2: #199e70;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--ink-2); font-size: 13px; }
+  .spacer { flex: 1; }
+  .range { display: flex; gap: 4px; }
+  .range button {
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+    padding: 6px 12px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px;
+  }
+  .range button.on { color: var(--ink); font-weight: 700; border-color: var(--axis); }
+  a.export {
+    color: var(--ink-2); font-size: 13px; text-decoration: none;
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; background: var(--surface);
+  }
+  main { padding: 20px 24px 40px; max-width: 1200px; margin: 0 auto; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+  }
+  .tile .label { color: var(--ink-2); font-size: 12px; letter-spacing: .02em; }
+  .tile .value { font-size: 32px; font-weight: 700; line-height: 1.2; margin-top: 4px; }
+  .tile .hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .tile.alert .value { color: var(--st-crit); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 12px; color: var(--ink-2); font-weight: 600; }
+  .semaforo { display: flex; gap: 12px; flex-wrap: wrap; }
+  .sem {
+    flex: 1; min-width: 130px; display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px;
+  }
+  .sem .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; }
+  .sem .n { font-size: 24px; font-weight: 700; margin-left: auto; }
+  .sem small { color: var(--ink-2); }
+  .chart-wrap { position: relative; height: 260px; }
+  .chart-wrap.tall { height: 300px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--grid); }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; color: var(--ink-2); }
+  td.folio { font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+  .chip .dot { width: 10px; height: 10px; border-radius: 50%; }
+  select.estado {
+    font: inherit; font-size: 12px; color: var(--ink-2); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px;
+  }
+  .overflow { overflow-x: auto; }
+  a { color: var(--series-1); }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Tablero HSE — Tarjeta Digital</h1>
+    <div class="sub">Observaciones de seguridad recibidas por WhatsApp · sin identificación del observador</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="range" role="group" aria-label="Período">
+    <button data-days="7">7 días</button>
+    <button data-days="30" class="on">30 días</button>
+    <button data-days="90">90 días</button>
+  </div>
+  <a class="export" href="/export.csv">⬇ Exportar CSV</a>
+</header>
+
+<main>
+  <section class="tiles" id="tiles"></section>
+
+  <section class="card" style="margin-top:12px">
+    <h2>Semáforo de prioridades (abiertas)</h2>
+    <div class="semaforo" id="semaforo"></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Observaciones por categoría de la tarjeta</h2>
+      <div class="chart-wrap tall"><canvas id="chCategorias" role="img" aria-label="Barras: observaciones por categoría"></canvas></div>
+    </section>
+    <section class="card">
+      <h2>Observaciones por lugar / sector</h2>
+      <div class="chart-wrap tall"><canvas id="chLugares" role="img" aria-label="Barras: observaciones por lugar"></canvas></div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:12px">
+    <h2>Tendencia semanal de observaciones recibidas (últimas 12 semanas)</h2>
+    <div class="chart-wrap"><canvas id="chTendencia" role="img" aria-label="Línea: observaciones por semana"></canvas></div>
+  </section>
+
+  <section class="card" style="margin-top:12px">
+    <h2>Últimas observaciones</h2>
+    <div class="overflow">
+      <table>
+        <thead><tr>
+          <th>Folio</th><th>Fecha</th><th>Lugar</th><th>Categoría</th>
+          <th>Observación</th><th>Prioridad</th><th>Estado</th><th>Foto</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<footer>Se actualiza automáticamente cada 60 segundos · Demo — sin autenticación</footer>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+let days = 30;
+let charts = {};
+
+const PRIORIDAD = {
+  rojo:     { label: 'Crítica',  icon: '⛔', color: () => css('--st-crit') },
+  amarillo: { label: 'Atención', icon: '⚠️', color: () => css('--st-warn') },
+  verde:    { label: 'Leve',     icon: '✅', color: () => css('--st-good') }
+};
+
+function baseOpts(indexAxis) {
+  Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+  return {
+    indexAxis, responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },  // una sola serie: el título la nombra
+    scales: {
+      x: { grid: { color: css('--grid') }, border: { color: css('--axis') },
+           ticks: { color: css('--muted'), precision: 0 } },
+      y: { grid: { color: indexAxis === 'y' ? 'transparent' : css('--grid') },
+           border: { color: css('--axis') },
+           ticks: { color: css('--muted'), precision: 0, autoSkip: false } }
+    }
+  };
+}
+
+function bar(id, labels, data, colorVar, horizontal = true) {
+  charts[id]?.destroy();
+  charts[id] = new Chart($('#' + id), {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: css(colorVar),
+      barThickness: 14, borderRadius: 4, borderSkipped: 'start' }] },
+    options: baseOpts(horizontal ? 'y' : 'x')
+  });
+}
+
+async function j(url) { return (await fetch(url)).json(); }
+
+function tile(label, value, hint, alert = false) {
+  return `<div class="tile ${alert ? 'alert' : ''}">
+    <div class="label">${label}</div><div class="value">${value}</div>
+    <div class="hint">${hint || ''}</div></div>`;
+}
+
+async function refresh() {
+  const [k, a, obs] = await Promise.all([
+    j('/api/kpis?days=' + days),
+    j('/api/agregados?days=' + days),
+    j('/api/observaciones?limit=25')
+  ]);
+
+  const hs = k.horas_desde_ultima;
+  const ultima = hs == null ? '—' : hs < 24 ? hs + ' h' : Math.floor(hs / 24) + ' d';
+  $('#tiles').innerHTML =
+    tile('Observaciones (' + k.dias + ' días)', k.total) +
+    tile('% actos seguros', k.pct_seguros + '%', k.seguros + ' seguros / ' + k.inseguros + ' inseguros') +
+    tile('Críticas abiertas', k.rojas_abiertas, 'requieren acción', k.rojas_abiertas > 0) +
+    tile('Última observación', ultima, 'tiempo desde el último reporte');
+
+  $('#semaforo').innerHTML = [
+    ['rojo', k.rojas_abiertas], ['amarillo', k.amarillas_abiertas], ['verde', k.verdes_abiertas]
+  ].map(([p, n]) => {
+    const d = PRIORIDAD[p];
+    return `<div class="sem"><span class="dot" style="background:${d.color()}"></span>
+      ${d.icon} <small>${d.label}</small><span class="n">${n}</span></div>`;
+  }).join('');
+
+  bar('chCategorias',
+    a.por_categoria.map(c => c.categoria + '· ' + c.nombre),
+    a.por_categoria.map(c => c.n), '--series-1');
+  bar('chLugares',
+    a.por_lugar.map(l => l.lugar),
+    a.por_lugar.map(l => l.n), '--series-2');
+
+  charts.chTendencia?.destroy();
+  charts.chTendencia = new Chart($('#chTendencia'), {
+    type: 'line',
+    data: {
+      labels: a.por_semana.map(s => 'sem. ' + s.inicio),
+      datasets: [{ data: a.por_semana.map(s => s.n),
+        borderColor: css('--series-1'), backgroundColor: css('--series-1'),
+        borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0.25 }]
+    },
+    options: { ...baseOpts('x'), interaction: { mode: 'index', intersect: false } }
+  });
+
+  $('#tbody').innerHTML = obs.map(o => {
+    const p = PRIORIDAD[o.prioridad] || PRIORIDAD.verde;
+    return `<tr>
+      <td class="folio">${o.folio}</td>
+      <td>${(o.fecha_obs || o.created_at || '').slice(0, 10)}</td>
+      <td>${o.lugar || '—'}</td>
+      <td>${o.categoria ? o.categoria + ' · ' + (o.categoria_nombre || '') : '—'}</td>
+      <td>${o.observacion || ''}</td>
+      <td><span class="chip"><span class="dot" style="background:${p.color()}"></span>${p.icon} ${p.label}</span></td>
+      <td><select class="estado" data-id="${o.id}">
+        ${['nueva', 'en_revision', 'cerrada'].map(e =>
+          `<option value="${e}" ${e === o.estado ? 'selected' : ''}>${e.replace('_', ' ')}</option>`).join('')}
+      </select></td>
+      <td>${o.foto_path ? `<a href="/media/${o.foto_path}" target="_blank">ver</a>` : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  document.querySelectorAll('select.estado').forEach(sel =>
+    sel.addEventListener('change', async () => {
+      await fetch(`/api/observaciones/${sel.dataset.id}/estado`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: sel.value })
+      });
+      refresh();
+    }));
+}
+
+document.querySelectorAll('.range button').forEach(b =>
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.range button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    days = Number(b.dataset.days);
+    refresh();
+  }));
+
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refresh);
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>

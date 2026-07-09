@@ -1,0 +1,6 @@
+.git
+data
+dashboard/node_modules
+n8n/workflow.json
+docs
+*.md
