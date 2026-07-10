@@ -12,6 +12,8 @@ const hash = crypto.createHmac('sha256', secret).update(from).digest('hex').slic
 const numMedia = Number(b.NumMedia || 0);
 const mediaType = b.MediaContentType0 || '';
 const hasMedia = numMedia > 0 && mediaType.startsWith('image');
+// notas de voz de WhatsApp llegan como audio/ogg (opus); archivos: audio/mpeg, audio/mp4, audio/amr
+const hasAudio = numMedia > 0 && mediaType.startsWith('audio');
 
 // Capturar timestamp de Twilio (formato Unix)
 const twilioTimestamp = b.Timestamp || Math.floor(Date.now() / 1000).toString();
@@ -27,7 +29,8 @@ return [{
   json: {
     hash,
     hasMedia,
-    mediaUrl: hasMedia ? b.MediaUrl0 : null,
+    hasAudio,
+    mediaUrl: (hasMedia || hasAudio) ? b.MediaUrl0 : null,
     mediaType,
     text: (b.Body || '').trim(),
     twilioAuth,

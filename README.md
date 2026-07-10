@@ -76,7 +76,8 @@ método `POST`, y guardar.
 1. Desde tu WhatsApp, mandá `join <código-del-sandbox>` al número del sandbox (el código aparece en la misma pantalla de Twilio). Una sola vez por teléfono.
 2. Mandá `hola` → el bot te explica cómo se usa.
 3. Mandá una **foto de una tarjeta de observaciones** completa → el bot devuelve el resumen interpretado → respondé `OK` → folio asignado.
-4. Abrí el tablero: [http://localhost:3000](http://localhost:3000) — la observación ya está, clasificada y priorizada.
+4. Mandá una **nota de voz** contando qué viste, dónde y qué se hizo → el bot responde `🎙️ Escuché: «…»` con la transcripción y sigue la conversación igual que con texto.
+5. Abrí el tablero: [http://localhost:3000](http://localhost:3000) — la observación ya está, clasificada y priorizada.
 
 ## Tablero
 
@@ -96,6 +97,10 @@ docker compose logs cloudflared-dashboard 2>&1 | grep trycloudflare
 Esa URL la puede abrir cualquier persona mientras el contenedor esté corriendo.
 
 Arranca con datos de demostración (`SEED_DEMO=true` en `.env`; poné `false` y borrá el volumen `hse_data` para empezar en limpio).
+
+## Presentación para charlas
+
+En **`/presentacion/`** (mismo host que el tablero) hay un sitio de 8 slides para presentar el proyecto en vivo: problema → solución → QR de participación del público → stack → dashboard en vivo (iframe del tablero) → cierre con contactos. Todo estático y self-contained (QRs pre-generados en SVG, sin CDNs): funciona aunque la wifi del auditorio falle. Navegación con flechas, swipe y `F` para pantalla completa. El guion con tiempos está en [`docs/demo-script.md`](docs/demo-script.md).
 
 ## Desarrollo local (sin Docker)
 

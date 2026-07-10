@@ -81,4 +81,10 @@ if (out.accion === 'rechazar') {
   session = { estado_flujo: 'awaiting_orchestrator', datos: { ...datos, _historial: historial } };
 }
 
+// eco de la transcripción: el operario ve qué se entendió y puede corregir antes del OK
+if (ctx.transcripcion) {
+  const t = ctx.transcripcion.length > 250 ? ctx.transcripcion.slice(0, 250) + '…' : ctx.transcripcion;
+  reply = `🎙️ Escuché: «${t}»\n\n${reply}`;
+}
+
 return [{ json: { persist: { reporter_hash: ctx.hash, session, reply } } }];

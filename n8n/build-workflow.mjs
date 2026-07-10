@@ -26,7 +26,13 @@ const code = {
   armarTwiml: src('08-armar-twiml.js'),
   orquestador: src('14-orquestador.js').replace('__PROMPT_ORQUESTADOR__', JSON.stringify(promptOrquestador)),
   procesarOrquestador: src('15-procesar-orquestador.js'),
+  procesarTranscripcion: src('16-procesar-transcripcion.js'),
 };
+
+// Contexto de jerga para Whisper: mejora mucho el reconocimiento del vocabulario HSE
+const WHISPER_PROMPT = 'Observación de seguridad en yacimiento petrolero. Vocabulario: EPP, casco, ' +
+  'arnés, retroexcavadora, locación, near-miss, acto inseguro, tarjeta de observaciones, contratista, ' +
+  'izaje, boca de pozo, batería, playa de tanques, pañol, equipo de torre, pulling.';
 
 const codeNode = (name, jsCode, position, extra = {}) => ({
   name,
@@ -95,8 +101,8 @@ const nodes = [
     typeVersion: 3.2,
     position: [800, 300],
     parameters: {
-      rules: { values: ['foto', 'confirmar'].map(switchRule) },
-      options: { fallbackOutput: 'extra' }, // 3.ª salida: orquestador (todo el resto)
+      rules: { values: ['foto', 'audio', 'confirmar'].map(switchRule) },
+      options: { fallbackOutput: 'extra' }, // 4.ª salida: orquestador (todo el resto)
     },
   },
   // --- Flujo A: foto de la tarjeta ---
@@ -116,6 +122,64 @@ const nodes = [
   codeNode('Foto a base64', code.fotoABase64, [1200, 0]),
   groqNode('LLM visión', [1400, 0]),
   codeNode('Armar respuesta', code.armarRespuesta, [1600, 0]),
+  // --- Flujo C: nota de voz → Whisper → orquestador ---
+  {
+    name: 'Descargar audio',
+    type: 'n8n-nodes-base.httpRequest',
+    typeVersion: 4.2,
+    position: [1000, 150],
+    parameters: {
+      method: 'GET',
+      url: '={{ $json.mediaUrl }}',
+      sendHeaders: true,
+      headerParameters: { parameters: [{ name: 'Authorization', value: '={{ $json.twilioAuth }}' }] },
+      options: { response: { response: { responseFormat: 'file' } } },
+    },
+  },
+  {
+    name: 'Transcribir audio',
+    type: 'n8n-nodes-base.httpRequest',
+    typeVersion: 4.2,
+    position: [1200, 150],
+    onError: 'continueRegularOutput', // si Whisper falla, "Procesar transcripción" responde el fallback
+    parameters: {
+      method: 'POST',
+      url: 'https://api.groq.com/openai/v1/audio/transcriptions',
+      sendHeaders: true,
+      headerParameters: { parameters: [
+        { name: 'Authorization', value: '=Bearer {{ $env.GROQ_API_KEY }}' },
+      ] },
+      sendBody: true,
+      contentType: 'multipart-form-data',
+      bodyParameters: { parameters: [
+        { parameterType: 'formBinaryData', name: 'file', inputDataFieldName: 'data' },
+        { name: 'model', value: "={{ $env.GROQ_WHISPER_MODEL || 'whisper-large-v3' }}" },
+        { name: 'language', value: 'es' },
+        { name: 'response_format', value: 'json' },
+        { name: 'prompt', value: WHISPER_PROMPT },
+      ] },
+      options: { timeout: 90000 },
+    },
+  },
+  codeNode('Procesar transcripción', code.procesarTranscripcion, [1400, 150]),
+  {
+    name: '¿Se entendió?',
+    type: 'n8n-nodes-base.if',
+    typeVersion: 2,
+    position: [1600, 150],
+    parameters: {
+      conditions: {
+        options: { caseSensitive: true, leftValue: '', typeValidation: 'strict', version: 2 },
+        conditions: [{
+          leftValue: '={{ $json.entendido }}',
+          rightValue: 'si',
+          operator: { type: 'string', operation: 'equals' },
+        }],
+        combinator: 'and',
+      },
+      options: {},
+    },
+  },
   // --- Flujo B: Orquestador conversacional (LLM decide preguntar/confirmar/rechazar) ---
   codeNode('Orquestador', code.orquestador, [1000, 300]),
   groqNode('LLM orquestador', [1200, 300]),
@@ -171,12 +235,21 @@ const connections = connect([
   ['Router', [main('Switch Acción')]],
   ['Switch Acción', [
     { ...main('Descargar foto'), _out: 0 },        // foto
-    { ...main('Finalizar observación'), _out: 1 }, // confirmar
-    { ...main('Orquestador'), _out: 2 },           // fallback: orquestador (todo el resto)
+    { ...main('Descargar audio'), _out: 1 },       // audio
+    { ...main('Finalizar observación'), _out: 2 }, // confirmar
+    { ...main('Orquestador'), _out: 3 },           // fallback: orquestador (todo el resto)
   ]],
   ['Descargar foto', [main('Foto a base64')]],
   ['Foto a base64', [main('LLM visión')]],
   ['LLM visión', [main('Armar respuesta')]],
+  // Flujo audio: transcribir y derivar al orquestador (o fallback si no se entendió)
+  ['Descargar audio', [main('Transcribir audio')]],
+  ['Transcribir audio', [main('Procesar transcripción')]],
+  ['Procesar transcripción', [main('¿Se entendió?')]],
+  ['¿Se entendió?', [
+    { ...main('Orquestador'), _out: 0 },           // true: sigue la conversación normal
+    { ...main('Persistir'), _out: 1 },             // false: fallback directo al operario
+  ]],
   // Flujo Orquestador conversacional
   ['Orquestador', [main('LLM orquestador')]],
   ['LLM orquestador', [main('Procesar orquestador')]],

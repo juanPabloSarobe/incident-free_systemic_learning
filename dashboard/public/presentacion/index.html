@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Los near-misses mueren en el papel — ENE IA LAB · Vertical HSE</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2218%22 fill=%22%23e02424%22/></svg>">
+<style>
+  :root {
+    --bg: #0a0f1e; --bg2: #101830; --rojo: #e02424; --blanco: #f4f6fb;
+    --gris: #9aa3b5; --borde: rgba(255,255,255,.14);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--blanco); overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  /* --- chrome --- */
+  #progreso { position: fixed; top: 0; left: 0; height: 3px; background: var(--rojo); width: 0; transition: width .3s; z-index: 30; }
+  header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 22px;
+  }
+  header img { height: 34px; display: block; }
+  #contador { color: var(--gris); font-size: 14px; font-variant-numeric: tabular-nums; }
+  nav { position: fixed; bottom: 18px; right: 20px; z-index: 20; display: flex; gap: 8px; }
+  nav button {
+    width: 46px; height: 46px; border-radius: 12px; border: 1px solid var(--borde);
+    background: rgba(255,255,255,.05); color: var(--blanco); font-size: 22px; cursor: pointer;
+  }
+  nav button:hover { background: rgba(255,255,255,.12); }
+  #ayuda { position: fixed; bottom: 24px; left: 22px; z-index: 20; color: var(--gris); font-size: 12px; }
+  @media (max-width: 700px) { #ayuda { display: none; } }
+
+  /* --- slides --- */
+  .slide {
+    position: absolute; inset: 0; padding: 76px min(6vw, 70px) 70px;
+    display: flex; flex-direction: column; justify-content: center;
+    opacity: 0; visibility: hidden; transform: translateY(12px);
+    transition: opacity .35s ease, transform .35s ease, visibility .35s;
+  }
+  .slide.activa { opacity: 1; visibility: visible; transform: none; }
+  .rotulo { color: var(--rojo); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; font-size: clamp(12px, 1.4vw, 15px); margin-bottom: 14px; }
+  h1 { font-size: clamp(34px, 6.5vw, 74px); line-height: 1.05; letter-spacing: -.02em; }
+  h2 { font-size: clamp(26px, 4.2vw, 46px); line-height: 1.1; letter-spacing: -.01em; margin-bottom: 18px; }
+  .bajada { color: var(--gris); font-size: clamp(16px, 2vw, 22px); line-height: 1.5; max-width: 60ch; margin-top: 18px; }
+  .bajada strong, .col li strong { color: var(--blanco); }
+  .acento { color: var(--rojo); }
+
+  /* 1 · portada */
+  #s1 { background: linear-gradient(rgba(10,15,30,.88), rgba(10,15,30,.96)), url(assets/cartel-polo.jpg) center/cover; }
+  #s1 .banner { width: min(420px, 60vw); border-radius: 12px; margin-bottom: 30px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  #s1 footer { margin-top: 34px; color: var(--gris); font-size: clamp(13px, 1.6vw, 16px); }
+
+  /* 2 · qué hicimos */
+  .dos-col { display: grid; grid-template-columns: 1.15fr .85fr; gap: min(5vw, 60px); align-items: center; }
+  @media (max-width: 860px) { .dos-col { grid-template-columns: 1fr; } }
+  .tarjeta-foto { max-height: 62vh; max-width: 100%; border-radius: 14px; box-shadow: 0 16px 50px rgba(0,0,0,.55); justify-self: center; }
+  @media (max-width: 860px) { .tarjeta-foto { max-height: 34vh; } }
+  .puntos { list-style: none; margin-top: 20px; display: grid; gap: 14px; color: var(--gris); font-size: clamp(15px, 1.9vw, 20px); line-height: 1.45; }
+  .puntos li { padding-left: 26px; position: relative; }
+  .puntos li::before { content: ''; position: absolute; left: 0; top: .55em; width: 12px; height: 3px; background: var(--rojo); }
+
+  /* 3 · cómo funciona */
+  .flujo { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; margin-top: 26px; }
+  .caja { background: var(--bg2); border: 1px solid var(--borde); border-radius: 14px; padding: 16px 18px; min-width: 130px; flex: 1; }
+  .caja b { display: block; font-size: clamp(15px, 1.8vw, 20px); }
+  .caja span { color: var(--gris); font-size: clamp(12px, 1.4vw, 14px); }
+  .flecha { align-self: center; color: var(--rojo); font-size: clamp(18px, 2.4vw, 28px); font-weight: 700; }
+  .nota { margin-top: 26px; color: var(--gris); font-size: clamp(14px, 1.8vw, 18px); }
+  .nota b { color: var(--blanco); }
+
+  /* 4 · participá */
+  #s4 .dos-col { grid-template-columns: 1fr 1fr; align-items: center; }
+  .qr-card { background: #fff; border-radius: 22px; padding: clamp(10px, 1.6vw, 20px); width: min(56vh, 38vw, 460px); justify-self: center; box-shadow: 0 0 0 6px var(--rojo), 0 20px 60px rgba(0,0,0,.6); }
+  @media (max-width: 860px) { .qr-card { width: min(46vh, 78vw); } }
+  .qr-card img { display: block; width: 100%; }
+  .pasos { list-style: none; counter-reset: p; display: grid; gap: 18px; margin-top: 22px; }
+  .pasos li { counter-increment: p; padding-left: 58px; position: relative; font-size: clamp(17px, 2.2vw, 24px); line-height: 1.35; }
+  .pasos li::before {
+    content: counter(p); position: absolute; left: 0; top: 0; width: 42px; height: 42px;
+    background: var(--rojo); border-radius: 12px; display: grid; place-items: center; font-weight: 800; font-size: 22px;
+  }
+  .pasos small { color: var(--gris); font-size: clamp(13px, 1.6vw, 16px); display: block; }
+  .btn {
+    display: inline-block; margin-top: 26px; background: var(--rojo); color: #fff; text-decoration: none;
+    padding: 13px 22px; border-radius: 12px; font-weight: 700; font-size: clamp(14px, 1.8vw, 18px);
+  }
+
+  /* 5 · stack */
+  .grilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-top: 26px; }
+  .grilla .caja { flex: none; }
+
+  /* 6 · beneficios */
+  .tres-col { display: grid; grid-template-columns: repeat(3, 1fr); gap: min(3vw, 30px); margin-top: 26px; }
+  @media (max-width: 860px) { .tres-col { grid-template-columns: 1fr; gap: 14px; } }
+  .col h3 { color: var(--rojo); text-transform: uppercase; letter-spacing: .1em; font-size: clamp(13px, 1.5vw, 15px); margin-bottom: 12px; }
+  .col ul { list-style: none; display: grid; gap: 10px; color: var(--gris); font-size: clamp(14px, 1.7vw, 18px); line-height: 1.4; }
+  .col li { padding-left: 22px; position: relative; }
+  .col li::before { content: ''; position: absolute; left: 0; top: .5em; width: 10px; height: 3px; background: var(--rojo); }
+
+  /* 7 · dashboard */
+  #s7 { padding-top: 66px; padding-bottom: 20px; }
+  #s7 .encabezado { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+  #s7 iframe { flex: 1; width: 100%; border: 1px solid var(--borde); border-radius: 14px; background: #fff; min-height: 0; }
+  #s7 .btn { margin-top: 0; }
+
+  /* 8 · cierre */
+  .cierre-top { display: flex; gap: min(4vw, 50px); align-items: center; justify-content: center; }
+  .foto-cierre { max-height: 42vh; max-width: 34vw; border-radius: 16px; box-shadow: 0 16px 50px rgba(0,0,0,.55); }
+  .lema { font-size: clamp(30px, 5.2vw, 62px); font-weight: 800; letter-spacing: .02em; line-height: 1.05; }
+  .gracias { color: var(--gris); margin-top: 18px; font-size: clamp(14px, 1.8vw, 18px); line-height: 1.5; }
+  /* franja de contacto a todo el ancho: los QRs en los extremos para que no se mezclen al escanear */
+  .franja-contacto {
+    display: flex; justify-content: space-between; align-items: center; gap: min(3vw, 30px);
+    margin-top: min(5vh, 44px); padding-top: min(3vh, 26px); border-top: 1px solid var(--borde);
+  }
+  .contacto { text-align: center; flex: none; }
+  .contacto .qr-mini { background: #fff; border-radius: 14px; padding: 9px; width: clamp(130px, 22vh, 210px); margin: 0 auto; }
+  .contacto .qr-mini img { display: block; width: 100%; }
+  .contacto .etiqueta { display: block; margin-top: 10px; font-weight: 800; font-size: clamp(18px, 2.3vw, 28px); }
+  .contacto small { display: block; margin-top: 4px; color: var(--gris); font-size: clamp(13px, 1.6vw, 17px); }
+  .quien { text-align: center; }
+  .quien .nombre { display: block; font-weight: 800; font-size: clamp(28px, 4.2vw, 54px); line-height: 1.1; letter-spacing: -.01em; }
+  .quien .cargo { display: block; margin-top: 8px; color: var(--rojo); font-weight: 700; font-size: clamp(14px, 1.8vw, 19px); letter-spacing: .06em; text-transform: uppercase; }
+  .quien .mail { display: block; margin-top: 10px; color: var(--gris); font-size: clamp(15px, 2vw, 21px); }
+
+  /* crédito de autoría en todos los slides, alineado con los botones de navegación */
+  #credito {
+    position: fixed; bottom: 34px; right: 132px; z-index: 20; text-align: right;
+    color: var(--gris); font-size: 12px; line-height: 1.2; pointer-events: none;
+  }
+
+  /* móvil: una columna en todos los slides y scroll vertical si el contenido no entra */
+  @media (max-width: 860px) {
+    #s4 .dos-col { grid-template-columns: 1fr; }
+    .qr-card { grid-row: 1; }  /* el QR arriba, los pasos abajo */
+    .slide { justify-content: flex-start; overflow-y: auto; padding-top: 86px; padding-bottom: 90px; }
+    .cierre-top { flex-direction: column; }
+    .foto-cierre { max-height: 24vh; max-width: 80vw; }
+    .franja-contacto { flex-direction: column; gap: 26px; }
+    #credito { display: none; }  /* en el teléfono los botones ya ocupan el pie */
+  }
+</style>
+</head>
+<body>
+<div id="progreso"></div>
+<header>
+  <img src="assets/logo-ene-hse.jpg" alt="ENE IA LAB · HSE">
+  <span id="contador">1/8</span>
+</header>
+
+<!-- 1 · Portada -->
+<section class="slide" id="s1">
+  <img class="banner" src="assets/banner-hse.jpg" alt="Vertical HSE">
+  <h1>Los near-misses<br>mueren <span class="acento">en el papel</span></h1>
+  <p class="bajada">Cada incidente evitado que no se reporta es <strong>aprendizaje que la organización pierde</strong>. Hicimos que reportarlo cueste lo mismo que mandar un WhatsApp.</p>
+  <footer>ENE IA LAB · Vertical HSE · Polo Científico Tecnológico Neuquén</footer>
+</section>
+
+<!-- 2 · Qué hicimos y por qué -->
+<section class="slide" id="s2">
+  <div class="dos-col">
+    <div>
+      <p class="rotulo">Qué hicimos y por qué</p>
+      <h2>No cambiamos el procedimiento.<br><span class="acento">Le sacamos la fricción.</span></h2>
+      <ul class="puntos">
+        <li>La tarjeta de observaciones existe, funciona y la gente la conoce. El problema es el circuito: <strong>escribir con frío y viento, caminar al buzón, esperar que alguien la transcriba</strong>.</li>
+        <li>Ahora el operador le saca una <strong>foto</strong>, la manda por <strong>WhatsApp</strong> — la herramienta que ya tiene en el bolsillo — y sigue trabajando.</li>
+        <li>¿No tiene tarjeta o lapicera? La <strong>dicta por audio</strong> o la escribe. Un asistente le pregunta solo lo que falta.</li>
+      </ul>
+    </div>
+    <img class="tarjeta-foto" src="assets/tarjeta-papel.jpg" alt="Tarjeta de observaciones en papel">
+  </div>
+</section>
+
+<!-- 3 · Cómo funciona -->
+<section class="slide" id="s3">
+  <p class="rotulo">Cómo funciona</p>
+  <h2>Del bolsillo del operador<br>al tablero de HSE, <span class="acento">en segundos</span></h2>
+  <div class="flujo">
+    <div class="caja"><b>📱 WhatsApp</b><span>foto · audio · texto</span></div>
+    <div class="flecha">→</div>
+    <div class="caja"><b>Twilio</b><span>canal de mensajería</span></div>
+    <div class="flecha">→</div>
+    <div class="caja"><b>n8n</b><span>orquestación</span></div>
+    <div class="flecha">→</div>
+    <div class="caja"><b>IA (Groq)</b><span>lee la tarjeta, transcribe el audio, clasifica y conversa</span></div>
+    <div class="flecha">→</div>
+    <div class="caja"><b>SQLite</b><span>registro estructurado</span></div>
+    <div class="flecha">→</div>
+    <div class="caja"><b>📊 Tablero</b><span>semáforo de prioridades</span></div>
+  </div>
+  <p class="nota">🔒 <b>Anónimo como la tarjeta de papel:</b> el número de teléfono nunca se guarda. La clasificación usa la misma taxonomía del formulario POSS016-F1 — el papel sigue valiendo, la foto es el puente.</p>
+</section>
+
+<!-- 4 · Participá ahora -->
+<section class="slide" id="s4">
+  <div class="dos-col">
+    <div>
+      <p class="rotulo">🎯 Participá ahora</p>
+      <h2>Mandá tu observación<br><span class="acento">mientras seguimos</span></h2>
+      <ol class="pasos">
+        <li>Escaneá el QR y mandá el <b>join</b> que aparece precargado. <small>Una sola vez por teléfono.</small></li>
+        <li>Mandá tu tarjeta: <b>foto, audio o texto</b>. <small>Vale mandar cualquier cosa — después vemos qué hace la IA con una foto de milanesas.</small></li>
+      </ol>
+      <a class="btn" href="https://wa.me/14155238886?text=join%20grandmother-angry" target="_blank" rel="noopener">Abrir en WhatsApp →</a>
+    </div>
+    <div class="qr-card"><img src="assets/qr-participar.svg" alt="QR para unirse por WhatsApp"></div>
+  </div>
+</section>
+
+<!-- 5 · Stack -->
+<section class="slide" id="s5">
+  <p class="rotulo">Stack tecnológico</p>
+  <h2>Todo free tier u open source,<br>corriendo en <span class="acento">una Mac mini</span></h2>
+  <div class="grilla">
+    <div class="caja"><b>n8n</b><span>orquestación de flujos</span></div>
+    <div class="caja"><b>Twilio</b><span>WhatsApp API</span></div>
+    <div class="caja"><b>Groq</b><span>LLM de visión + Whisper</span></div>
+    <div class="caja"><b>Docker</b><span>3 contenedores</span></div>
+    <div class="caja"><b>Cloudflare Tunnel</b><span>URL pública sin abrir puertos</span></div>
+    <div class="caja"><b>SQLite</b><span>base de datos</span></div>
+    <div class="caja"><b>Node.js</b><span>API + tablero</span></div>
+    <div class="caja"><b>Claude Code + GPT</b><span>copilotos de desarrollo</span></div>
+  </div>
+  <p class="nota">El costo de experimentar es <b>cero</b>. La barrera ya no es el presupuesto: es animarse a probar.</p>
+</section>
+
+<!-- 6 · Beneficios + estado + camino -->
+<section class="slide" id="s6">
+  <p class="rotulo">Beneficios · Estado · Camino</p>
+  <h2>Un demo funcional sobre un<br><span class="acento">dolor validado</span> de la industria</h2>
+  <div class="tres-col">
+    <div class="col">
+      <h3>Qué aporta</h3>
+      <ul>
+        <li><strong>Near-misses que antes se perdían</strong>, capturados donde ocurren.</li>
+        <li>Clasificación automática con la taxonomía de la tarjeta.</li>
+        <li>Tablero en tiempo real con semáforo de prioridades.</li>
+      </ul>
+    </div>
+    <div class="col">
+      <h3>Qué es (y qué no)</h3>
+      <ul>
+        <li>Demo funcional construido sobre el dolor <strong>#1 priorizado por el vertical</strong>: near-misses sin aprendizaje sistémico.</li>
+        <li>No es un producto terminado — <strong>sí una base seria</strong> para evolucionar.</li>
+      </ul>
+    </div>
+    <div class="col">
+      <h3>Camino</h3>
+      <ul>
+        <li>Reporte por audio ✅</li>
+        <li>Integración con sistemas HSEQ corporativos.</li>
+        <li>Número de WhatsApp propio y URL estable.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 7 · Dashboard en vivo -->
+<section class="slide" id="s7">
+  <div class="encabezado">
+    <div>
+      <p class="rotulo">Dashboard en vivo</p>
+      <h2 style="margin:0">Lo que mandaron <span class="acento">ustedes</span></h2>
+    </div>
+    <a class="btn" href="/" target="_blank" rel="noopener">Abrir tablero completo →</a>
+  </div>
+  <iframe data-src="/" title="Tablero HSE en vivo"></iframe>
+</section>
+
+<!-- 8 · Cierre -->
+<section class="slide" id="s8">
+  <div class="cierre-top">
+    <img class="foto-cierre" src="assets/juan-cierre.jpg" alt="Juan Pablo Sarobe">
+    <div>
+      <p class="lema">COMPETIR<br>Y <span class="acento">COMPARTIR</span></p>
+      <p class="gracias">Gracias · Polo Científico Tecnológico Neuquén<br>ENE IA LAB · Vertical HSE</p>
+    </div>
+  </div>
+  <div class="franja-contacto">
+    <div class="contacto">
+      <div class="qr-mini"><img src="assets/qr-linkedin.svg" alt="QR LinkedIn"></div>
+      <span class="etiqueta">LinkedIn</span>
+      <small>/in/juanpablosarobe</small>
+    </div>
+    <div class="quien">
+      <span class="nombre">Juan Pablo Sarobe</span>
+      <span class="cargo">ENE IA LAB · Vertical HSE</span>
+      <span class="mail">jp.sarobe@gmail.com</span>
+    </div>
+    <div class="contacto">
+      <div class="qr-mini"><img src="assets/qr-whatsapp.svg" alt="QR WhatsApp"></div>
+      <span class="etiqueta">WhatsApp</span>
+      <small>+54 9 299 691-1111</small>
+    </div>
+  </div>
+</section>
+
+<div id="credito">Juan Pablo Sarobe · ENE IA LAB</div>
+
+<nav>
+  <button id="prev" aria-label="Anterior">‹</button>
+  <button id="next" aria-label="Siguiente">›</button>
+</nav>
+<div id="ayuda">← → navegar · F pantalla completa</div>
+
+<script>
+const slides = [...document.querySelectorAll('.slide')];
+let actual = Math.min(Math.max((parseInt(location.hash.slice(1)) || 1) - 1, 0), slides.length - 1);
+
+function ir(i) {
+  actual = Math.min(Math.max(i, 0), slides.length - 1);
+  slides.forEach((s, j) => s.classList.toggle('activa', j === actual));
+  document.getElementById('contador').textContent = (actual + 1) + '/' + slides.length;
+  document.getElementById('progreso').style.width = ((actual + 1) / slides.length * 100) + '%';
+  history.replaceState(null, '', '#' + (actual + 1));
+  // el tablero se carga recién al llegar al slide 7 (y queda vivo: se auto-refresca solo)
+  const f = document.querySelector('#s7 iframe');
+  if (actual === slides.indexOf(document.getElementById('s7')) && !f.src) f.src = f.dataset.src;
+}
+
+document.getElementById('next').onclick = () => ir(actual + 1);
+document.getElementById('prev').onclick = () => ir(actual - 1);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); ir(actual + 1); }
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); ir(actual - 1); }
+  else if (e.key === 'Home') ir(0);
+  else if (e.key === 'End') ir(slides.length - 1);
+  else if (e.key.toLowerCase() === 'f') {
+    document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+  }
+});
+
+let x0 = null;
+document.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; }, { passive: true });
+document.addEventListener('touchend', (e) => {
+  if (x0 === null) return;
+  const dx = e.changedTouches[0].clientX - x0;
+  if (Math.abs(dx) > 50) ir(actual + (dx < 0 ? 1 : -1));
+  x0 = null;
+}, { passive: true });
+
+window.addEventListener('hashchange', () => {
+  const n = parseInt(location.hash.slice(1));
+  if (n && n - 1 !== actual) ir(n - 1);
+});
+
+ir(actual);
+</script>
+</body>
+</html>

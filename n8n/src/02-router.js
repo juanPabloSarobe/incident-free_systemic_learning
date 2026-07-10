@@ -10,6 +10,8 @@ const esConfirmacion = /^(ok|oka|okey|si|sí|dale|confirmo|listo|va|perfecto|cor
 let accion;
 if (ctx.hasMedia) {
   accion = 'foto';                                   // Flujo A: foto de la tarjeta de papel
+} else if (ctx.hasAudio) {
+  accion = 'audio';                                  // Flujo C: nota de voz → Whisper → orquestador
 } else if (session && session.estado_flujo === 'awaiting_confirm' && esConfirmacion) {
   accion = 'confirmar';                              // el operario aprobó el resumen
 } else {
