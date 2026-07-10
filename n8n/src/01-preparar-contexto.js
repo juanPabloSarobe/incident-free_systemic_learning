@@ -28,6 +28,10 @@ const twilioAuth = 'Basic ' + Buffer.from(`${$env.TWILIO_SID}:${$env.TWILIO_TOKE
 return [{
   json: {
     hash,
+    // Destinatario TRANSITORIO para responder por la API REST (el webhook ya devolvió
+    // un ACK vacío; la respuesta real sale como mensaje nuevo). No se persiste nunca.
+    to: from,
+    fromBot: b.To || '',
     hasMedia,
     hasAudio,
     mediaUrl: (hasMedia || hasAudio) ? b.MediaUrl0 : null,

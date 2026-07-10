@@ -78,6 +78,15 @@ Diseño de la conversación:
   - Instrucción explícita de **no inventar**: campo ausente ⇒ `null` (dispara la repregunta).
 - El JSON crudo del LLM se guarda en `raw_llm_json` para auditar clasificaciones erradas y mejorar prompts con casos reales.
 
+## 5 bis. Regla de oro conversacional: NUNCA silencio
+
+Un bot de seguridad que no contesta se lee como "el sistema está roto" — y la gente deja de reportar. Dos defensas:
+
+- **Respuesta asíncrona**: Twilio corta el webhook a los 15 s, pero el LLM puede tardar más. El webhook devuelve un ACK vacío al instante y la respuesta real sale como mensaje nuevo por la API REST de Twilio (`Messages.json`). La latencia del LLM ya no puede causar silencio. El número del operario se usa solo en tránsito para el envío; sigue sin persistirse.
+- **Todo camino termina en un mensaje**: los nodos HTTP degradan con `onError: continue` y los lectores de binarios tienen fallback ("no pude descargar la foto, ¿la reenviás?").
+
+**Anti-abuso con aviso explícito** (3 strikes / 30 min): cada `rechazar` del orquestador registra un strike (`flagged_reports` + `user_stats`). El 2º rechazo advierte ("si el próximo tampoco es una observación real, pauso 30 minutos"); el 3º pausa e **informa hasta qué hora**; durante la pausa toda entrada recibe el aviso de estado (sin gastar LLM) y al vencer se desbloquea solo. El orquestador además recibe los antecedentes ("N rechazos recientes") para rechazar directo sin re-entrevistar al que está jugando. La cola `/api/flagged` queda para revisión del supervisor.
+
 ## 6. Anonimato
 
 Requisito heredado de la tarjeta (firma opcional, cultura de no-castigo):
