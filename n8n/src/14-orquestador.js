@@ -18,8 +18,17 @@ const historial = Array.isArray(datosPrevios._historial) ? datosPrevios._histori
 const datosLimpios = { ...datosPrevios };
 delete datosLimpios._historial;
 
+// Fecha y hora actual (huso del yacimiento): sin esto el modelo no puede resolver
+// respuestas como "ayer a la tarde" o "hace dos horas" a una fecha concreta.
+const tz = $env.GENERIC_TIMEZONE || 'America/Argentina/Buenos_Aires';
+const ahora = new Date().toLocaleString('es-AR', {
+  timeZone: tz, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+});
+
 // Contexto del estado actual para el system prompt
 const systemContent = PROMPT_ORQUESTADOR +
+  `\n\n## Fecha y hora actual\n${ahora} (huso ${tz})` +
   `\n\n## Datos ya recolectados hasta ahora\n` +
   JSON.stringify(datosLimpios, null, 2) +
   (ctx.transcripcion

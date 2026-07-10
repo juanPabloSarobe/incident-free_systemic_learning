@@ -41,6 +41,17 @@ if (!legible || confianza < 0.35) {
   } } }];
 }
 
+// --- ¿Ya había un borrador (ej. mandó el frente y ahora el dorso)? Consolidar ---
+// Lo ya cargado gana; la foto nueva solo completa los campos vacíos.
+const previos = (ctx.session && ctx.session.datos) || null;
+if (previos) {
+  for (const [k, v] of Object.entries(previos)) {
+    if (k === '_historial') continue;
+    if ((datos[k] == null || datos[k] === '') && v != null) datos[k] = v;
+  }
+  if (previos._historial) datos._historial = previos._historial;
+}
+
 // --- Integrar metadata de Twilio ---
 if (ctx.twilioTimestamp) datos.timestamp_mensaje = ctx.twilioTimestamp;
 if (ctx.latitud) datos.latitud = ctx.latitud;
@@ -76,6 +87,7 @@ if (faltan.length) {
   session = { estado_flujo: 'awaiting_confirm', datos };
   const lineas = [
     '📋 *Resumen de tu observación*',
+    datos.fecha_obs ? `📅 Fecha: ${datos.fecha_obs}` : '📅 Fecha: (sin fecha en la tarjeta — se usa la de carga)',
     `📍 Lugar: ${datos.lugar}`,
     datos.servicio_obra ? `🏗 Servicio/Obra: ${datos.servicio_obra}` : null,
     `🏷 Tipo: ${TIPO[datos.tipo]}`,

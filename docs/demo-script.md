@@ -51,6 +51,7 @@ Frase clave: *"El procedimiento no cambió: la misma tarjeta, el mismo formato. 
 2. El bot repregunta solo lo que falta (o resume directo si está todo).
 3. `OK` → folio → tablero.
 4. Repetir la observación pero como **nota de voz**: el bot responde `🎙️ Escuché: «…»` con la transcripción (se puede corregir antes del OK) y sigue igual que con texto. También vale foto de la tarjeta + audio explicando qué pasó, en la misma conversación.
+5. Después del folio, mandar una **foto de lo observado** (el cable, el derrame, el equipo): el bot la adjunta al reporte (`📎 Foto 1 agregada…`) y en el tablero aparece junto a la observación. La ventana dura 10 minutos y se renueva con cada foto; cualquier texto la cierra.
 
 Frase clave: *"Si no tiene tarjeta, lapicera, o hace -5° con viento: lo dicta igual. Cero excusas para no reportar."*
 

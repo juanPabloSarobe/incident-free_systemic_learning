@@ -121,6 +121,7 @@ Diseñado para el gerente/supervisor de HSE que entra 2 minutos por día:
 
 Corto plazo:
 - ~~**Audio → texto**~~ ✅ implementado: nota de voz de WhatsApp → Whisper en Groq (`whisper-large-v3`, free tier, con prompt de jerga petrolera) → eco `🎙️ Escuché: «…»` → mismo flujo del orquestador que un mensaje de texto. En el campo, con guantes, hablar gana por goleada.
+- ✅ **Fotos de evidencia**: tras el folio se abre una ventana de 10 min (renovable con cada foto, cerrada por cualquier texto) para adjuntar fotos de lo observado — tabla `fotos`, visibles en el tablero y contadas en el CSV. La tarjeta es transitoria: el registro fotográfico de la condición insegura vale por sí mismo. Bonus: frente y dorso de la tarjeta en la misma conversación se consolidan en un solo reporte.
 - **Alerta de rojas**: cuando entra una prioridad `rojo`, n8n avisa al canal del equipo HSE (WhatsApp/Telegram/mail).
 - URL fija del túnel (Cloudflare named tunnel) para no reconfigurar Twilio en cada reinicio.
 

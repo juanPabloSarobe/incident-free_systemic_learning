@@ -239,7 +239,10 @@ async function refresh() {
         ${['nueva', 'en_revision', 'cerrada'].map(e =>
           `<option value="${e}" ${e === o.estado ? 'selected' : ''}>${e.replace('_', ' ')}</option>`).join('')}
       </select></td>
-      <td>${o.foto_path ? `<a href="/media/${o.foto_path}" target="_blank">ver</a>` : '—'}</td>
+      <td>${[
+        o.foto_path ? `<a href="/media/${o.foto_path}" target="_blank">tarjeta</a>` : null,
+        ...(o.fotos || []).map((p, i) => `<a href="/media/${p}" target="_blank">📎${i + 1}</a>`)
+      ].filter(Boolean).join(' ') || '—'}</td>
     </tr>`;
   }).join('');
 

@@ -33,6 +33,8 @@ datos.tipo = ['inseguro', 'seguro', 'no_audita'].includes(datos.tipo) ? datos.ti
 datos.severidad = Math.min(4, Math.max(1, Number(datos.severidad) || 1));
 const cat = Number(datos.categoria);
 datos.categoria = cat >= 1 && cat <= 11 ? cat : null;
+const np = Number(datos.num_personas);
+datos.num_personas = Number.isFinite(np) && np > 0 ? Math.round(np) : null;
 // prioridad determinística (no se delega al LLM)
 datos.prioridad = datos.tipo === 'seguro' ? 'verde'
   : datos.severidad >= 3 ? 'rojo'
@@ -61,14 +63,23 @@ if (out.accion === 'rechazar') {
   // tenemos lo esencial: armar resumen determinístico y pedir OK
   // red de seguridad: nunca confirmar "sin categoría"
   if (!datos.categoria) datos.categoria = 11; // Otros
+  // defaults acordados: nunca más blancos mudos en el export
+  const tz = $env.GENERIC_TIMEZONE || 'America/Argentina/Buenos_Aires';
+  const ahoraLocal = new Date().toLocaleString('sv-SE', { timeZone: tz }).slice(0, 16); // YYYY-MM-DD HH:MM
+  if (!datos.fecha_obs || /^ahora$/i.test(String(datos.fecha_obs).trim())) datos.fecha_obs = ahoraLocal;
+  if (!datos.servicio_obra) datos.servicio_obra = 'No indicado';
+  if (!datos.acciones_correctivas) datos.acciones_correctivas = 'Sin acciones en el momento';
+  const PERSONAL = { propio: 'propio', contratista: 'contratista' };
   const lineas = [
     '📋 *Resumen de tu observación*',
+    `📅 Fecha: ${datos.fecha_obs}`,
     `📍 Lugar: ${datos.lugar || '(sin especificar)'}`,
-    datos.servicio_obra ? `🏗 Servicio/Obra: ${datos.servicio_obra}` : null,
+    `🏗 Servicio/Obra: ${datos.servicio_obra}`,
     `🏷 Tipo: ${TIPO[datos.tipo]}`,
     datos.categoria ? `📂 Categoría: ${datos.categoria} · ${CATEGORIAS[datos.categoria]}${datos.subitem ? ` (${datos.subitem})` : ''}` : null,
+    datos.num_personas ? `👥 Personas: ${datos.num_personas}${PERSONAL[datos.personal] ? ` (${PERSONAL[datos.personal]})` : ''}` : null,
     `📝 ${datos.observacion || '(sin descripción)'}`,
-    datos.acciones_correctivas ? `🛠 Acción inmediata: ${datos.acciones_correctivas}` : '🛠 Acción inmediata: (sin registrar)',
+    `🛠 Acción inmediata: ${datos.acciones_correctivas}`,
     `🚦 Prioridad: ${SEMAFORO[datos.prioridad]}`,
     '',
     'Respondé *OK* para confirmar, o escribí lo que haya que corregir.',

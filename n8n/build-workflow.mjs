@@ -27,6 +27,7 @@ const code = {
   orquestador: src('14-orquestador.js').replace('__PROMPT_ORQUESTADOR__', JSON.stringify(promptOrquestador)),
   procesarOrquestador: src('15-procesar-orquestador.js'),
   procesarTranscripcion: src('16-procesar-transcripcion.js'),
+  adjuntarFoto: src('17-adjuntar-foto.js'),
 };
 
 // Contexto de jerga para Whisper: mejora mucho el reconocimiento del vocabulario HSE
@@ -101,8 +102,8 @@ const nodes = [
     typeVersion: 3.2,
     position: [800, 300],
     parameters: {
-      rules: { values: ['foto', 'audio', 'confirmar'].map(switchRule) },
-      options: { fallbackOutput: 'extra' }, // 4.ª salida: orquestador (todo el resto)
+      rules: { values: ['foto', 'audio', 'confirmar', 'adjuntar_foto'].map(switchRule) },
+      options: { fallbackOutput: 'extra' }, // 5.ª salida: orquestador (todo el resto)
     },
   },
   // --- Flujo A: foto de la tarjeta ---
@@ -162,6 +163,21 @@ const nodes = [
     },
   },
   codeNode('Procesar transcripción', code.procesarTranscripcion, [1400, 150]),
+  // --- adjuntos de evidencia post-folio ---
+  {
+    name: 'Descargar adjunto',
+    type: 'n8n-nodes-base.httpRequest',
+    typeVersion: 4.2,
+    position: [1000, 840],
+    parameters: {
+      method: 'GET',
+      url: '={{ $json.mediaUrl }}',
+      sendHeaders: true,
+      headerParameters: { parameters: [{ name: 'Authorization', value: '={{ $json.twilioAuth }}' }] },
+      options: { response: { response: { responseFormat: 'file' } } },
+    },
+  },
+  codeNode('Adjuntar foto', code.adjuntarFoto, [1200, 840]),
   {
     name: '¿Se entendió?',
     type: 'n8n-nodes-base.if',
@@ -237,8 +253,11 @@ const connections = connect([
     { ...main('Descargar foto'), _out: 0 },        // foto
     { ...main('Descargar audio'), _out: 1 },       // audio
     { ...main('Finalizar observación'), _out: 2 }, // confirmar
-    { ...main('Orquestador'), _out: 3 },           // fallback: orquestador (todo el resto)
+    { ...main('Descargar adjunto'), _out: 3 },     // adjuntar_foto (evidencia post-folio)
+    { ...main('Orquestador'), _out: 4 },           // fallback: orquestador (todo el resto)
   ]],
+  ['Descargar adjunto', [main('Adjuntar foto')]],
+  ['Adjuntar foto', [main('Persistir')]],
   ['Descargar foto', [main('Foto a base64')]],
   ['Foto a base64', [main('LLM visión')]],
   ['LLM visión', [main('Armar respuesta')]],

@@ -77,7 +77,8 @@ método `POST`, y guardar.
 2. Mandá `hola` → el bot te explica cómo se usa.
 3. Mandá una **foto de una tarjeta de observaciones** completa → el bot devuelve el resumen interpretado → respondé `OK` → folio asignado.
 4. Mandá una **nota de voz** contando qué viste, dónde y qué se hizo → el bot responde `🎙️ Escuché: «…»` con la transcripción y sigue la conversación igual que con texto.
-5. Abrí el tablero: [http://localhost:3000](http://localhost:3000) — la observación ya está, clasificada y priorizada.
+5. Después del folio, tenés **10 minutos para mandar fotos de lo observado** (todas las que quieras): quedan adjuntas al reporte y visibles en el tablero.
+6. Abrí el tablero: [http://localhost:3000](http://localhost:3000) — la observación ya está, clasificada y priorizada.
 
 ## Tablero
 
