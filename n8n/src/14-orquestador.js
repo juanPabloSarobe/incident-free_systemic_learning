@@ -3,8 +3,11 @@
 // decida de forma natural si preguntar, confirmar o rechazar. Reemplaza la lógica rígida.
 const PROMPT_ORQUESTADOR = __PROMPT_ORQUESTADOR__;
 
-// Leer del Router (ya trae la sesión cargada); Preparar contexto corre antes de la sesión.
-const ctx = $('Router').first().json;
+// Leer del Router (ya trae la sesión cargada); si el mensaje fue una nota de voz,
+// el contexto llega desde "Procesar transcripción" con el texto transcripto.
+let ctx;
+try { ctx = $('Procesar transcripción').first().json; }
+catch (e) { ctx = $('Router').first().json; }
 const session = ctx.session || null;
 
 // Recuperar datos acumulados e historial de la sesión (si existe)
@@ -18,7 +21,10 @@ delete datosLimpios._historial;
 // Contexto del estado actual para el system prompt
 const systemContent = PROMPT_ORQUESTADOR +
   `\n\n## Datos ya recolectados hasta ahora\n` +
-  JSON.stringify(datosLimpios, null, 2);
+  JSON.stringify(datosLimpios, null, 2) +
+  (ctx.transcripcion
+    ? '\n\nNota: el mensaje actual proviene de un AUDIO transcripto automáticamente; puede traer errores de reconocimiento (nombres de lugares, números). Interpretalo con criterio.'
+    : '');
 
 // Armar los mensajes: system + historial + mensaje actual
 const messages = [{ role: 'system', content: systemContent }];

@@ -120,7 +120,7 @@ Diseñado para el gerente/supervisor de HSE que entra 2 minutos por día:
 ## 11. Roadmap (después de la demo)
 
 Corto plazo:
-- **Audio → texto**: nota de voz de WhatsApp → Whisper en Groq (también free tier) → mismo Flujo B. En el campo, con guantes, hablar gana por goleada.
+- ~~**Audio → texto**~~ ✅ implementado: nota de voz de WhatsApp → Whisper en Groq (`whisper-large-v3`, free tier, con prompt de jerga petrolera) → eco `🎙️ Escuché: «…»` → mismo flujo del orquestador que un mensaje de texto. En el campo, con guantes, hablar gana por goleada.
 - **Alerta de rojas**: cuando entra una prioridad `rojo`, n8n avisa al canal del equipo HSE (WhatsApp/Telegram/mail).
 - URL fija del túnel (Cloudflare named tunnel) para no reconfigurar Twilio en cada reinicio.
 

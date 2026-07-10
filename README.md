@@ -76,7 +76,8 @@ método `POST`, y guardar.
 1. Desde tu WhatsApp, mandá `join <código-del-sandbox>` al número del sandbox (el código aparece en la misma pantalla de Twilio). Una sola vez por teléfono.
 2. Mandá `hola` → el bot te explica cómo se usa.
 3. Mandá una **foto de una tarjeta de observaciones** completa → el bot devuelve el resumen interpretado → respondé `OK` → folio asignado.
-4. Abrí el tablero: [http://localhost:3000](http://localhost:3000) — la observación ya está, clasificada y priorizada.
+4. Mandá una **nota de voz** contando qué viste, dónde y qué se hizo → el bot responde `🎙️ Escuché: «…»` con la transcripción y sigue la conversación igual que con texto.
+5. Abrí el tablero: [http://localhost:3000](http://localhost:3000) — la observación ya está, clasificada y priorizada.
 
 ## Tablero
 
