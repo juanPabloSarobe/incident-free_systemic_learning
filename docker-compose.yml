@@ -50,6 +50,16 @@ services:
     depends_on:
       - n8n
 
+  # Túnel público opcional para ver el tablero web desde cualquier navegador.
+  # La URL aparece en los logs del contenedor:
+  #   docker compose logs cloudflared-dashboard | grep trycloudflare
+  cloudflared-dashboard:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://dashboard:3000
+    depends_on:
+      - dashboard
+
 volumes:
   n8n_data:
   hse_data:

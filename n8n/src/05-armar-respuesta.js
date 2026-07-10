@@ -1,9 +1,6 @@
-// Nodo "Armar respuesta": procesa la salida del LLM (visión o texto), normaliza,
+// Nodo "Armar respuesta": procesa la salida del LLM de visión (flujo foto), normaliza,
 // detecta datos faltantes y arma la respuesta al operador + el payload de persistencia.
-// Recibe de "LLM visión" o de "LLM texto"; recupera el contexto del nodo que haya corrido.
-let ctx;
-try { ctx = $('Foto a base64').first().json; }
-catch (e) { ctx = $('Armar prompt texto').first().json; }
+const ctx = $('Foto a base64').first().json;
 
 const CATEGORIAS = {
   1: 'Reacciones de las Personas', 2: 'Posiciones de las Personas',
@@ -28,8 +25,28 @@ if (!datos) {
   } } }];
 }
 
+// --- Legibilidad / confianza de la lectura de la foto ---
+const legible = datos.tarjeta_legible !== false;
+const confianza = typeof datos.confianza === 'number' ? datos.confianza : 1;
+const dudas = Array.isArray(datos.dudas) ? datos.dudas.filter(Boolean) : [];
+
+// Si la tarjeta está en blanco, no es una tarjeta o es ilegible: pedir reenvío o texto.
+if (!legible || confianza < 0.35) {
+  const motivo = dudas.length ? ` (${dudas.slice(0, 2).join('; ')})` : '';
+  return [{ json: { persist: {
+    reporter_hash: ctx.hash,
+    session: null,
+    reply: '📸 No pude leer bien la tarjeta' + motivo + '.\n\n' +
+      'Probá sacarle una foto más nítida, con buena luz y sin sombras/suciedad, o *contame por texto* qué observaste y dónde.',
+  } } }];
+}
+
+// --- Integrar metadata de Twilio ---
+if (ctx.twilioTimestamp) datos.timestamp_mensaje = ctx.twilioTimestamp;
+if (ctx.latitud) datos.latitud = ctx.latitud;
+if (ctx.longitud) datos.longitud = ctx.longitud;
+
 // --- normalizar + prioridad determinística (el semáforo no se delega al LLM) ---
-if (ctx.accion === 'completar') datos = { ...ctx.session.datos, ...datos };
 datos.tipo = ['inseguro', 'seguro', 'no_audita'].includes(datos.tipo) ? datos.tipo : 'inseguro';
 datos.severidad = Math.min(4, Math.max(1, Number(datos.severidad) || 1));
 datos.prioridad = datos.tipo === 'seguro' ? 'verde'
@@ -39,19 +56,22 @@ const cat = Number(datos.categoria);
 datos.categoria = cat >= 1 && cat <= 11 ? cat : null;
 datos.fecha_obs = datos.fecha_obs || datos.fecha || null;
 delete datos.fecha;
-if (ctx.fotoB64) datos.origen = 'foto';
-if (!datos.origen) datos.origen = 'virtual';
+datos.origen = 'foto';
+// no persistir campos auxiliares de lectura
+delete datos.tarjeta_legible;
+delete datos.confianza;
+delete datos.dudas;
 
-// --- ¿falta algo crítico? repreguntar SOLO eso ---
+// --- ¿falta algo crítico? repreguntar; el orquestador continúa la charla ---
 const faltan = [];
 if (!datos.observacion) faltan.push('*qué observaste* (contame brevemente)');
 if (!datos.lugar) faltan.push('*dónde fue* (sector / locación)');
 
 let session, reply;
 if (faltan.length) {
-  session = { estado_flujo: 'awaiting_field', datos };
-  reply = (ctx.fotoB64 ? '📸 Recibí tu tarjeta, ¡gracias! ' : '¡Gracias por reportar! ') +
-    `Me falta un dato: ${faltan.join(' y ')}.`;
+  // dejamos el borrador en sesión: si el operario responde por texto, lo toma el orquestador
+  session = { estado_flujo: 'awaiting_orchestrator', datos: { ...datos, _historial: [] } };
+  reply = '📸 Recibí tu tarjeta, ¡gracias! Me falta un dato: ' + faltan.join(' y ') + '.';
 } else {
   session = { estado_flujo: 'awaiting_confirm', datos };
   const lineas = [
@@ -63,6 +83,9 @@ if (faltan.length) {
     `📝 ${datos.observacion}`,
     datos.acciones_correctivas ? `🛠 Acción inmediata: ${datos.acciones_correctivas}` : '🛠 Acción inmediata: (sin registrar)',
     `🚦 Prioridad: ${SEMAFORO[datos.prioridad]}`,
+    // si el modelo tuvo dudas al leer, las mostramos para que el operario las verifique
+    dudas.length ? '' : null,
+    dudas.length ? `⚠️ Verificá esto que no leí con certeza: ${dudas.slice(0, 3).join('; ')}` : null,
     '',
     'Respondé *OK* para confirmar, o escribí lo que haya que corregir.',
   ].filter((l) => l !== null);

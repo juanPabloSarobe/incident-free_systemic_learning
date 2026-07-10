@@ -1,4 +1,5 @@
 {
+  "id": "hse-tarjeta-digital-whatsapp",
   "name": "HSE Tarjeta Digital — WhatsApp",
   "nodes": [
     {
@@ -28,7 +29,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "// Nodo \"Preparar contexto\": normaliza el webhook de Twilio y anonimiza al remitente.\n// El número de teléfono NUNCA sigue viaje: solo su HMAC (mismo criterio que la tarjeta anónima).\nconst crypto = require('crypto');\n\nconst b = $input.first().json.body || {};\nconst from = b.From || ''; // ej: \"whatsapp:+549299XXXXXXX\"\n\nconst secret = $env.HASH_SECRET || 'cambiar-este-secreto';\nconst hash = crypto.createHmac('sha256', secret).update(from).digest('hex').slice(0, 32);\n\nconst numMedia = Number(b.NumMedia || 0);\nconst mediaType = b.MediaContentType0 || '';\nconst hasMedia = numMedia > 0 && mediaType.startsWith('image');\n\n// Twilio exige Basic Auth (SID:token) para descargar el media adjunto\nconst twilioAuth = 'Basic ' + Buffer.from(`${$env.TWILIO_SID}:${$env.TWILIO_TOKEN}`).toString('base64');\n\nreturn [{\n  json: {\n    hash,\n    hasMedia,\n    mediaUrl: hasMedia ? b.MediaUrl0 : null,\n    mediaType,\n    text: (b.Body || '').trim(),\n    twilioAuth,\n  },\n}];"
+        "jsCode": "// Nodo \"Preparar contexto\": normaliza el webhook de Twilio y anonimiza al remitente.\n// El número de teléfono NUNCA sigue viaje: solo su HMAC (mismo criterio que la tarjeta anónima).\n// También captura timestamp y ubicación si están disponibles.\nconst crypto = require('crypto');\n\nconst b = $input.first().json.body || {};\nconst from = b.From || ''; // ej: \"whatsapp:+549299XXXXXXX\"\n\nconst secret = $env.HASH_SECRET || 'cambiar-este-secreto';\nconst hash = crypto.createHmac('sha256', secret).update(from).digest('hex').slice(0, 32);\n\nconst numMedia = Number(b.NumMedia || 0);\nconst mediaType = b.MediaContentType0 || '';\nconst hasMedia = numMedia > 0 && mediaType.startsWith('image');\n\n// Capturar timestamp de Twilio (formato Unix)\nconst twilioTimestamp = b.Timestamp || Math.floor(Date.now() / 1000).toString();\n\n// Capturar ubicación si el usuario la compartió\nconst latitud = b.Latitude ? parseFloat(b.Latitude) : null;\nconst longitud = b.Longitude ? parseFloat(b.Longitude) : null;\n\n// Twilio exige Basic Auth (SID:token) para descargar el media adjunto\nconst twilioAuth = 'Basic ' + Buffer.from(`${$env.TWILIO_SID}:${$env.TWILIO_TOKEN}`).toString('base64');\n\nreturn [{\n  json: {\n    hash,\n    hasMedia,\n    mediaUrl: hasMedia ? b.MediaUrl0 : null,\n    mediaType,\n    text: (b.Body || '').trim(),\n    twilioAuth,\n    twilioTimestamp,\n    latitud,\n    longitud,\n  },\n}];"
       }
     },
     {
@@ -56,7 +57,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "// Nodo \"Router\": decide qué hacer con el mensaje según el contenido y la sesión vigente.\nconst ctx = $('Preparar contexto').first().json;\nconst session = $input.first().json.session || null;\nconst t = (ctx.text || '').toLowerCase();\n\nlet accion;\nif (ctx.hasMedia) {\n  accion = 'foto';                 // Flujo A: foto de la tarjeta de papel\n} else if (session && session.estado_flujo === 'awaiting_confirm'\n           && /^(ok|oka|okey|s[ií]|dale|confirmo|listo|va|perfecto)\\b/.test(t)) {\n  accion = 'confirmar';            // el operador aprobó el resumen\n} else if (session) {\n  accion = 'completar';            // respuesta a una repregunta, o corrección al resumen\n} else if (t.length >= 15) {\n  accion = 'nueva_texto';          // Flujo B: observación 100% virtual\n} else {\n  accion = 'ayuda';                // saludo / mensaje corto: explicar cómo se usa\n}\n\nreturn [{ json: { ...ctx, session, accion } }];"
+        "jsCode": "// Nodo \"Router\": decide el camino mínimo. Toda la inteligencia conversacional vive\n// en el Orquestador (LLM). Acá solo separamos 3 caminos: foto, confirmación explícita\n// de un resumen pendiente, o el orquestador (todo el resto: saludos, texto, correcciones).\nconst ctx = $('Preparar contexto').first().json;\nconst session = $input.first().json.session || null;\nconst t = (ctx.text || '').toLowerCase().trim();\n\nconst esConfirmacion = /^(ok|oka|okey|si|sí|dale|confirmo|listo|va|perfecto|correcto)\\b/.test(t);\n\nlet accion;\nif (ctx.hasMedia) {\n  accion = 'foto';                                   // Flujo A: foto de la tarjeta de papel\n} else if (session && session.estado_flujo === 'awaiting_confirm' && esConfirmacion) {\n  accion = 'confirmar';                              // el operario aprobó el resumen\n} else {\n  accion = 'orquestador';                            // TODO lo demás lo maneja el LLM\n}\n\nreturn [{ json: { ...ctx, session, accion } }];"
       }
     },
     {
@@ -93,52 +94,6 @@
               },
               "renameOutput": true,
               "outputKey": "foto"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.accion }}",
-                    "rightValue": "nueva_texto",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "nueva_texto"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.accion }}",
-                    "rightValue": "completar",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "completar"
             },
             {
               "conditions": {
@@ -210,7 +165,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// Nodo \"Foto a base64\": toma el binario descargado de Twilio y arma el pedido\n// al LLM de visión (Groq, API compatible con OpenAI) con el prompt de extracción.\nconst PROMPT_EXTRACCION = \"Sos el asistente digital del departamento de HSE de una empresa de servicios petroleros.\\nVas a recibir la FOTO de una \\\"Tarjeta de Observaciones\\\" (formulario POSS016-F1) completada a mano en el campo, posiblemente con mala letra, arrugada o con poca luz.\\n\\nTu tarea: leer la tarjeta y extraer los datos a JSON.\\n\\nEn el frente de la tarjeta hay: Servicio/Obra, Lugar, Fecha, Observación de Personal de (SIMA S.A. o Contratista), N° de Pers., y tres casillas de tipo: \\\"Acto Inseguro\\\", \\\"Acto Seguro\\\", \\\"No Audita\\\" (fijate cuál está marcada con una cruz o tilde). Después hay una grilla de categorías numeradas donde el observador marca el ítem que aplica.\\nEn el dorso hay dos campos de texto libre: \\\"Observación / Reconocimiento\\\" (qué vio) y \\\"Acciones Correctivas Realizadas\\\" (qué se hizo en el momento), cada uno con su número de ítem.\\n\\nTaxonomía de la Tarjeta de Observaciones POSS016-F1 (categoría: sub-ítems):\\n1. Reacciones de las Personas: a) Dejan el sitio b) Interrumpen sus tareas c) Reorganizan el trabajo / cambian de posición d) Aplican precauciones e) Cambian de herramientas\\n2. Posiciones de las Personas: a) Absorber-inhalar sustancias químicas b) Golpea contra / golpeado por c) Atrapado dentro, sobre o entre d) Caídas e) Sobreesfuerzo\\n3. Equipos de Protección Personal: a) Cabeza b) Oídos y ojos c) Cara y aparato respiratorio d) Manos y brazos e) Pies y piernas f) Protección contra caídas g) Protección contra incendios h) Indumentaria de trabajo\\n4. Herramientas y Equipos: a) Inadecuados b) Defectuosos o inseguros c) Usados incorrectamente\\n5. Procedimientos: a) No existen b) No se respetan c) No se comprenden d) No son adecuados para el trabajo\\n6. Orden y Aseo: a) Estándares inadecuados b) Bancos de trabajo y cajas de herramientas c) Corredores, pasillos, oficinas y comedores d) Almacenamiento de materiales\\n7. Vehicular: a) Acto inseguro b) Condición insegura\\n8. Ambiente: a) Clasificación de residuos b) Fugas - derrames - emisiones c) Uso de recurso natural d) Condición climática insegura\\n9. Productos Químicos: a) Identificación de productos químicos b) Hojas de seguridad\\n10. Instalaciones: a) Inexistentes - defectuosas - inseguras\\n11. Otros\\n\\nInterpretá el texto manuscrito con criterio (jerga de campo petrolero argentino). Si la categoría no está marcada pero se deduce del texto, asignala igual.\\n\\nRespondé ÚNICAMENTE con un objeto JSON válido (sin texto adicional, sin markdown) con esta forma exacta:\\n{\\n  \\\"servicio_obra\\\": \\\"string o null\\\",\\n  \\\"lugar\\\": \\\"string o null (sector/locación donde se observó)\\\",\\n  \\\"fecha\\\": \\\"YYYY-MM-DD o null\\\",\\n  \\\"tipo\\\": \\\"inseguro\\\" | \\\"seguro\\\" | \\\"no_audita\\\",\\n  \\\"personal\\\": \\\"propio\\\" | \\\"contratista\\\" | null,\\n  \\\"num_personas\\\": number | null,\\n  \\\"categoria\\\": number 1-11 | null,\\n  \\\"subitem\\\": \\\"letra del sub-ítem (a-h) o null\\\",\\n  \\\"observacion\\\": \\\"string o null (qué se observó, redactado claro)\\\",\\n  \\\"acciones_correctivas\\\": \\\"string o null (qué se hizo en el momento)\\\",\\n  \\\"severidad\\\": number 1-4\\n}\\nCriterio de severidad (potencial de daño, no el daño ocurrido):\\n1 = leve / buena práctica; 2 = moderada; 3 = seria (podía causar lesión); 4 = crítica / near-miss (podía causar lesión grave o fatalidad).\\nSi el mensaje describe un acto SEGURO o reconocimiento, tipo=\\\"seguro\\\" y severidad=1.\\nNo inventes datos: si algo no está en la entrada, usá null.\";\n\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst ctx = $('Router').first().json;\nconst fotoB64 = buf.toString('base64');\n\nconst groqBody = {\n  model: $env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct',\n  temperature: 0.2,\n  response_format: { type: 'json_object' },\n  messages: [{\n    role: 'user',\n    content: [\n      { type: 'text', text: PROMPT_EXTRACCION },\n      { type: 'image_url', image_url: { url: `data:${ctx.mediaType || 'image/jpeg'};base64,${fotoB64}` } },\n    ],\n  }],\n};\n\nreturn [{ json: { ...ctx, fotoB64, groqBody } }];"
+        "jsCode": "// Nodo \"Foto a base64\": toma el binario descargado de Twilio y arma el pedido\n// al LLM de visión (Groq, API compatible con OpenAI) con el prompt de extracción.\nconst PROMPT_EXTRACCION = \"Sos el asistente digital del departamento de HSE de una empresa de servicios petroleros.\\nVas a recibir la FOTO de una \\\"Tarjeta de Observaciones\\\" (formulario POSS016-F1) completada a mano en el campo. La foto puede tener mala letra, arrugas, poca luz, o estar sucia con tierra, barro o grasa. Leela con criterio, pero NO inventes lo que no se ve.\\n\\nTu tarea: leer la tarjeta y extraer los datos a JSON, informando honestamente tu nivel de certeza.\\n\\n## Estructura de la tarjeta\\nEn el frente hay: Servicio/Obra, Lugar, Fecha, Observación de Personal de (SIMA S.A. o Contratista), N° de Pers., una grilla de categorías numeradas (1 a 11) con sub-ítems (a, b, c...), y una referencia de tipo con tres casillas: \\\"Acto Inseguro\\\", \\\"Acto Seguro\\\", \\\"No Audita\\\".\\nEn el dorso hay dos campos de texto libre: \\\"Observación / Reconocimiento\\\" (qué vio) y \\\"Acciones Correctivas Realizadas\\\" (qué se hizo), cada uno con su número de ítem.\\n\\n## CÓMO INTERPRETAR LAS MARCAS (muy importante)\\nLa FORMA del símbolo con que se marca define el TIPO de observación:\\n- Una **cruz / equis (✗ o X)**  → tipo = \\\"inseguro\\\" (Acto Inseguro).\\n- Un **tilde / visto / check (✓)** → tipo = \\\"seguro\\\" (Acto Seguro).\\n- Una **barra en diagonal ( ╱ o / )** → tipo = \\\"no_audita\\\".\\nEsto aplica tanto a las tres casillas de referencia como a las marcas dentro de la grilla de categorías.\\nEl sub-ítem marcado en la grilla indica la categoría y el sub-ítem; la forma de esa marca confirma el tipo.\\nSi la marca de tipo en las casillas y la forma de la marca en la grilla se contradicen, anotalo en \\\"dudas\\\" y elegí la que se vea más clara.\\n\\n## MANEJO DE AMBIGÜEDAD (no adivines)\\n- Si una marca es **débil, doble, tachada, incompleta o ambigua**, NO la fuerces: dejá el campo en null y describí la duda en \\\"dudas\\\".\\n- Si un campo está **vacío o ilegible**, dejalo en null.\\n- Si la tarjeta está **en blanco, no es una tarjeta de observaciones, o es totalmente ilegible** (muy sucia, borrosa, cortada), poné \\\"tarjeta_legible\\\": false y explicá por qué en \\\"dudas\\\".\\n- Si la categoría no está marcada pero se deduce claramente del texto, asignala e indicá en \\\"dudas\\\" que fue inferida.\\n\\nTaxonomía de la Tarjeta de Observaciones POSS016-F1 (categoría: sub-ítems):\\n1. Reacciones de las Personas: a) Dejan el sitio b) Interrumpen sus tareas c) Reorganizan el trabajo / cambian de posición d) Aplican precauciones e) Cambian de herramientas\\n2. Posiciones de las Personas: a) Absorber-inhalar sustancias químicas b) Golpea contra / golpeado por c) Atrapado dentro, sobre o entre d) Caídas e) Sobreesfuerzo\\n3. Equipos de Protección Personal: a) Cabeza b) Oídos y ojos c) Cara y aparato respiratorio d) Manos y brazos e) Pies y piernas f) Protección contra caídas g) Protección contra incendios h) Indumentaria de trabajo\\n4. Herramientas y Equipos: a) Inadecuados b) Defectuosos o inseguros c) Usados incorrectamente\\n5. Procedimientos: a) No existen b) No se respetan c) No se comprenden d) No son adecuados para el trabajo\\n6. Orden y Aseo: a) Estándares inadecuados b) Bancos de trabajo y cajas de herramientas c) Corredores, pasillos, oficinas y comedores d) Almacenamiento de materiales\\n7. Vehicular: a) Acto inseguro b) Condición insegura\\n8. Ambiente: a) Clasificación de residuos b) Fugas - derrames - emisiones c) Uso de recurso natural d) Condición climática insegura\\n9. Productos Químicos: a) Identificación de productos químicos b) Hojas de seguridad\\n10. Instalaciones: a) Inexistentes - defectuosas - inseguras\\n11. Otros\\n\\nInterpretá el texto manuscrito con criterio (jerga de campo petrolero argentino).\\n\\nRespondé ÚNICAMENTE con un objeto JSON válido (sin texto adicional, sin markdown) con esta forma exacta:\\n{\\n  \\\"servicio_obra\\\": \\\"string o null\\\",\\n  \\\"lugar\\\": \\\"string o null (sector/locación donde se observó)\\\",\\n  \\\"fecha\\\": \\\"YYYY-MM-DD o null\\\",\\n  \\\"tipo\\\": \\\"inseguro\\\" | \\\"seguro\\\" | \\\"no_audita\\\",\\n  \\\"personal\\\": \\\"propio\\\" | \\\"contratista\\\" | null,\\n  \\\"num_personas\\\": number | null,\\n  \\\"categoria\\\": number 1-11 | null,\\n  \\\"subitem\\\": \\\"letra del sub-ítem (a-h) o null\\\",\\n  \\\"observacion\\\": \\\"string o null (qué se observó, redactado claro)\\\",\\n  \\\"acciones_correctivas\\\": \\\"string o null (qué se hizo en el momento)\\\",\\n  \\\"severidad\\\": number 1-4\\n}\\nCriterio de severidad (potencial de daño, no el daño ocurrido):\\n1 = leve / buena práctica; 2 = moderada; 3 = seria (podía causar lesión); 4 = crítica / near-miss (podía causar lesión grave o fatalidad).\\nSi el mensaje describe un acto SEGURO o reconocimiento, tipo=\\\"seguro\\\" y severidad=1.\\nNo inventes datos: si algo no está en la entrada, usá null.\\n\\nSi estás leyendo una FOTO de una tarjeta, agregá además estos campos:\\n  \\\"tarjeta_legible\\\": true | false,   // false si está en blanco, no es una tarjeta, o es ilegible\\n  \\\"confianza\\\": number 0.0-1.0,        // qué tan seguro estás de la lectura global\\n  \\\"dudas\\\": [\\\"string\\\"]                 // lista de marcas/campos ambiguos, dobles, débiles, incompletos o inferidos; [] si no hay\\nSé honesto con \\\"confianza\\\" y \\\"dudas\\\": es mejor marcar una duda que adivinar.\";\n\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst ctx = $('Router').first().json;\nconst fotoB64 = buf.toString('base64');\n\nconst groqBody = {\n  model: $env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct',\n  temperature: 0.2,\n  response_format: { type: 'json_object' },\n  messages: [{\n    role: 'user',\n    content: [\n      { type: 'text', text: PROMPT_EXTRACCION },\n      { type: 'image_url', image_url: { url: `data:${ctx.mediaType || 'image/jpeg'};base64,${fotoB64}` } },\n    ],\n  }],\n};\n\nreturn [{ json: { ...ctx, fotoB64, groqBody } }];"
       }
     },
     {
@@ -245,7 +200,20 @@
     },
     {
       "id": "nodo-09",
-      "name": "Armar prompt texto",
+      "name": "Armar respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Nodo \"Armar respuesta\": procesa la salida del LLM de visión (flujo foto), normaliza,\n// detecta datos faltantes y arma la respuesta al operador + el payload de persistencia.\nconst ctx = $('Foto a base64').first().json;\n\nconst CATEGORIAS = {\n  1: 'Reacciones de las Personas', 2: 'Posiciones de las Personas',\n  3: 'Equipos de Protección Personal', 4: 'Herramientas y Equipos',\n  5: 'Procedimientos', 6: 'Orden y Aseo', 7: 'Vehicular', 8: 'Ambiente',\n  9: 'Productos Químicos', 10: 'Instalaciones', 11: 'Otros',\n};\nconst TIPO = { inseguro: 'Acto Inseguro', seguro: 'Acto Seguro', no_audita: 'No Audita' };\nconst SEMAFORO = { rojo: '🔴 Crítica', amarillo: '🟡 Atención', verde: '🟢 Leve' };\n\n// --- parsear la salida del LLM (tolerante a fences de markdown) ---\nlet datos = null;\ntry {\n  const content = $input.first().json.choices[0].message.content;\n  datos = JSON.parse(content.replace(/```json|```/g, '').trim());\n} catch (e) { /* LLM caído o respuesta inválida */ }\n\nif (!datos) {\n  return [{ json: { persist: {\n    reporter_hash: ctx.hash,\n    reply: '😕 No pude procesar tu mensaje en este momento. Probá de nuevo en unos minutos, o entregá la tarjeta en papel como siempre.',\n  } } }];\n}\n\n// --- Legibilidad / confianza de la lectura de la foto ---\nconst legible = datos.tarjeta_legible !== false;\nconst confianza = typeof datos.confianza === 'number' ? datos.confianza : 1;\nconst dudas = Array.isArray(datos.dudas) ? datos.dudas.filter(Boolean) : [];\n\n// Si la tarjeta está en blanco, no es una tarjeta o es ilegible: pedir reenvío o texto.\nif (!legible || confianza < 0.35) {\n  const motivo = dudas.length ? ` (${dudas.slice(0, 2).join('; ')})` : '';\n  return [{ json: { persist: {\n    reporter_hash: ctx.hash,\n    session: null,\n    reply: '📸 No pude leer bien la tarjeta' + motivo + '.\\n\\n' +\n      'Probá sacarle una foto más nítida, con buena luz y sin sombras/suciedad, o *contame por texto* qué observaste y dónde.',\n  } } }];\n}\n\n// --- Integrar metadata de Twilio ---\nif (ctx.twilioTimestamp) datos.timestamp_mensaje = ctx.twilioTimestamp;\nif (ctx.latitud) datos.latitud = ctx.latitud;\nif (ctx.longitud) datos.longitud = ctx.longitud;\n\n// --- normalizar + prioridad determinística (el semáforo no se delega al LLM) ---\ndatos.tipo = ['inseguro', 'seguro', 'no_audita'].includes(datos.tipo) ? datos.tipo : 'inseguro';\ndatos.severidad = Math.min(4, Math.max(1, Number(datos.severidad) || 1));\ndatos.prioridad = datos.tipo === 'seguro' ? 'verde'\n  : datos.severidad >= 3 ? 'rojo'\n  : datos.severidad === 2 ? 'amarillo' : 'verde';\nconst cat = Number(datos.categoria);\ndatos.categoria = cat >= 1 && cat <= 11 ? cat : null;\ndatos.fecha_obs = datos.fecha_obs || datos.fecha || null;\ndelete datos.fecha;\ndatos.origen = 'foto';\n// no persistir campos auxiliares de lectura\ndelete datos.tarjeta_legible;\ndelete datos.confianza;\ndelete datos.dudas;\n\n// --- ¿falta algo crítico? repreguntar; el orquestador continúa la charla ---\nconst faltan = [];\nif (!datos.observacion) faltan.push('*qué observaste* (contame brevemente)');\nif (!datos.lugar) faltan.push('*dónde fue* (sector / locación)');\n\nlet session, reply;\nif (faltan.length) {\n  // dejamos el borrador en sesión: si el operario responde por texto, lo toma el orquestador\n  session = { estado_flujo: 'awaiting_orchestrator', datos: { ...datos, _historial: [] } };\n  reply = '📸 Recibí tu tarjeta, ¡gracias! Me falta un dato: ' + faltan.join(' y ') + '.';\n} else {\n  session = { estado_flujo: 'awaiting_confirm', datos };\n  const lineas = [\n    '📋 *Resumen de tu observación*',\n    `📍 Lugar: ${datos.lugar}`,\n    datos.servicio_obra ? `🏗 Servicio/Obra: ${datos.servicio_obra}` : null,\n    `🏷 Tipo: ${TIPO[datos.tipo]}`,\n    datos.categoria ? `📂 Categoría: ${datos.categoria} · ${CATEGORIAS[datos.categoria]}${datos.subitem ? ` (${datos.subitem})` : ''}` : null,\n    `📝 ${datos.observacion}`,\n    datos.acciones_correctivas ? `🛠 Acción inmediata: ${datos.acciones_correctivas}` : '🛠 Acción inmediata: (sin registrar)',\n    `🚦 Prioridad: ${SEMAFORO[datos.prioridad]}`,\n    // si el modelo tuvo dudas al leer, las mostramos para que el operario las verifique\n    dudas.length ? '' : null,\n    dudas.length ? `⚠️ Verificá esto que no leí con certeza: ${dudas.slice(0, 3).join('; ')}` : null,\n    '',\n    'Respondé *OK* para confirmar, o escribí lo que haya que corregir.',\n  ].filter((l) => l !== null);\n  reply = lineas.join('\\n');\n}\n\nconst persist = { reporter_hash: ctx.hash, session, reply };\nif (ctx.fotoB64) {          // la foto se guarda una sola vez, al extraer\n  persist.foto_base64 = ctx.fotoB64;\n  persist.foto_mime = ctx.mediaType || 'image/jpeg';\n}\n\nreturn [{ json: { persist } }];"
+      }
+    },
+    {
+      "id": "nodo-10",
+      "name": "Orquestador",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -253,12 +221,12 @@
         300
       ],
       "parameters": {
-        "jsCode": "// Nodo \"Armar prompt texto\": arma el pedido al LLM para el flujo virtual.\n// Cubre dos casos: observación nueva por texto, y actualización de un borrador\n// existente (respuesta a una repregunta o corrección del resumen).\nconst PROMPT_CLASIFICACION = \"Sos el asistente digital del departamento de HSE de una empresa de servicios petroleros.\\nUn operador en el campo te escribe por WhatsApp para reportar una observación de seguridad (equivalente a la \\\"Tarjeta de Observaciones\\\" en papel), en lenguaje coloquial y con jerga de campo petrolero argentino.\\n\\nTu tarea: estructurar el reporte a JSON, clasificándolo contra la taxonomía de la tarjeta.\\n\\nTaxonomía de la Tarjeta de Observaciones POSS016-F1 (categoría: sub-ítems):\\n1. Reacciones de las Personas: a) Dejan el sitio b) Interrumpen sus tareas c) Reorganizan el trabajo / cambian de posición d) Aplican precauciones e) Cambian de herramientas\\n2. Posiciones de las Personas: a) Absorber-inhalar sustancias químicas b) Golpea contra / golpeado por c) Atrapado dentro, sobre o entre d) Caídas e) Sobreesfuerzo\\n3. Equipos de Protección Personal: a) Cabeza b) Oídos y ojos c) Cara y aparato respiratorio d) Manos y brazos e) Pies y piernas f) Protección contra caídas g) Protección contra incendios h) Indumentaria de trabajo\\n4. Herramientas y Equipos: a) Inadecuados b) Defectuosos o inseguros c) Usados incorrectamente\\n5. Procedimientos: a) No existen b) No se respetan c) No se comprenden d) No son adecuados para el trabajo\\n6. Orden y Aseo: a) Estándares inadecuados b) Bancos de trabajo y cajas de herramientas c) Corredores, pasillos, oficinas y comedores d) Almacenamiento de materiales\\n7. Vehicular: a) Acto inseguro b) Condición insegura\\n8. Ambiente: a) Clasificación de residuos b) Fugas - derrames - emisiones c) Uso de recurso natural d) Condición climática insegura\\n9. Productos Químicos: a) Identificación de productos químicos b) Hojas de seguridad\\n10. Instalaciones: a) Inexistentes - defectuosas - inseguras\\n11. Otros\\n\\nRespondé ÚNICAMENTE con un objeto JSON válido (sin texto adicional, sin markdown) con esta forma exacta:\\n{\\n  \\\"servicio_obra\\\": \\\"string o null\\\",\\n  \\\"lugar\\\": \\\"string o null (sector/locación donde se observó)\\\",\\n  \\\"fecha\\\": \\\"YYYY-MM-DD o null\\\",\\n  \\\"tipo\\\": \\\"inseguro\\\" | \\\"seguro\\\" | \\\"no_audita\\\",\\n  \\\"personal\\\": \\\"propio\\\" | \\\"contratista\\\" | null,\\n  \\\"num_personas\\\": number | null,\\n  \\\"categoria\\\": number 1-11 | null,\\n  \\\"subitem\\\": \\\"letra del sub-ítem (a-h) o null\\\",\\n  \\\"observacion\\\": \\\"string o null (qué se observó, redactado claro)\\\",\\n  \\\"acciones_correctivas\\\": \\\"string o null (qué se hizo en el momento)\\\",\\n  \\\"severidad\\\": number 1-4\\n}\\nCriterio de severidad (potencial de daño, no el daño ocurrido):\\n1 = leve / buena práctica; 2 = moderada; 3 = seria (podía causar lesión); 4 = crítica / near-miss (podía causar lesión grave o fatalidad).\\nSi el mensaje describe un acto SEGURO o reconocimiento, tipo=\\\"seguro\\\" y severidad=1.\\nNo inventes datos: si algo no está en la entrada, usá null.\";\n\nconst ctx = $input.first().json;\n\nlet user;\nif (ctx.accion === 'completar') {\n  user = `Este es el borrador actual de la observación (JSON): ${JSON.stringify(ctx.session.datos)}\\n` +\n    `El operador agrega o corrige: \"${ctx.text}\"\\n` +\n    `Devolvé el JSON completo actualizado, conservando los campos que no cambian.`;\n} else {\n  user = `Mensaje del operador: \"${ctx.text}\"`;\n}\n\nconst groqBody = {\n  model: $env.GROQ_TEXT_MODEL || 'llama-3.3-70b-versatile',\n  temperature: 0.2,\n  response_format: { type: 'json_object' },\n  messages: [\n    { role: 'system', content: PROMPT_CLASIFICACION },\n    { role: 'user', content: user },\n  ],\n};\n\nreturn [{ json: { ...ctx, groqBody } }];"
+        "jsCode": "// Nodo \"Orquestador\": el cerebro conversacional. En cada mensaje arma el pedido al LLM\n// incluyendo el historial de la charla y los datos ya recolectados, para que el modelo\n// decida de forma natural si preguntar, confirmar o rechazar. Reemplaza la lógica rígida.\nconst PROMPT_ORQUESTADOR = \"Sos el asistente digital de HSE (Seguridad, Salud y Medio Ambiente) de una empresa de servicios petroleros en Argentina. Conversás por WhatsApp con operarios de campo para registrar observaciones de seguridad (equivalente a la \\\"Tarjeta de Observaciones\\\" en papel).\\n\\nTu trabajo es CONDUCIR la conversación de forma natural, humana y breve — como lo haría un buen supervisor de seguridad: entendés lo que la persona te quiere decir en lenguaje coloquial y con jerga petrolera, y le hacés las preguntas justas para completar el reporte. NO sos un formulario rígido.\\n\\n## Cómo trabajás\\n\\nEn cada mensaje recibís:\\n- El mensaje actual del operario.\\n- El historial de la conversación.\\n- Los datos que ya venís recolectando (pueden estar incompletos).\\n\\nY decidís UNA de tres acciones:\\n\\n1. **preguntar** — todavía falta información esencial. Hacé UNA sola pregunta, corta y natural, sobre lo más importante que falte. Nunca dispares varias preguntas juntas.\\n2. **confirmar** — ya tenés lo esencial (qué pasó + dónde). Armá un cierre y pedí confirmación.\\n3. **rechazar** — el mensaje NO es una observación de seguridad real (broma, insulto a un compañero, tema ajeno al trabajo, spam). Rechazá con amabilidad y sin ofender.\\n\\n## Datos ESENCIALES (mínimos para confirmar)\\n- **observacion**: qué se vio / qué pasó (obligatorio).\\n- **lugar**: sector, zona o locación donde ocurrió (obligatorio).\\n\\n## Datos DESEABLES (preguntá solo si la conversación fluye; no insistas)\\n- **servicio_obra**: en qué servicio u obra fue. Si preguntás por esto, sugerí ejemplos: Perforación Pozo A, Extracción Campo Centro, Mantenimiento Plataforma, Logística Base, u Otros.\\n- **acciones_correctivas**: qué se hizo en el momento.\\n\\n## Clasificación AUTOMÁTICA (NUNCA se le pregunta al operario — la inferís vos)\\nAntes de confirmar, SIEMPRE completá, deduciéndolos de la descripción:\\n- **tipo**: \\\"inseguro\\\" (acto/condición insegura), \\\"seguro\\\" (buena práctica/reconocimiento) o \\\"no_audita\\\".\\n- **categoria** (1-11): elegí SIEMPRE la más adecuada de la taxonomía. NUNCA la dejes en null si hay una observación; si dudás, usá 11 (Otros).\\n- **subitem** (a-h): si aplica, según la taxonomía.\\n- **severidad** (1-4): estimá el POTENCIAL de daño, no el daño ocurrido:\\n  1 leve/buena práctica; 2 moderada; 3 seria (podía causar lesión); 4 crítica/near-miss (lesión grave o fatalidad).\\n  Ejemplos de criterio: fuga/derrame de líquido o químico desconocido, olor/fuga de gas, trabajo en altura sin\\n  arnés, punto de atrapamiento, o sustancias peligrosas → severidad 3 o 4. No subestimes un peligro real.\\n\\nTaxonomía de la Tarjeta de Observaciones POSS016-F1 (categoría: sub-ítems):\\n1. Reacciones de las Personas: a) Dejan el sitio b) Interrumpen sus tareas c) Reorganizan el trabajo / cambian de posición d) Aplican precauciones e) Cambian de herramientas\\n2. Posiciones de las Personas: a) Absorber-inhalar sustancias químicas b) Golpea contra / golpeado por c) Atrapado dentro, sobre o entre d) Caídas e) Sobreesfuerzo\\n3. Equipos de Protección Personal: a) Cabeza b) Oídos y ojos c) Cara y aparato respiratorio d) Manos y brazos e) Pies y piernas f) Protección contra caídas g) Protección contra incendios h) Indumentaria de trabajo\\n4. Herramientas y Equipos: a) Inadecuados b) Defectuosos o inseguros c) Usados incorrectamente\\n5. Procedimientos: a) No existen b) No se respetan c) No se comprenden d) No son adecuados para el trabajo\\n6. Orden y Aseo: a) Estándares inadecuados b) Bancos de trabajo y cajas de herramientas c) Corredores, pasillos, oficinas y comedores d) Almacenamiento de materiales\\n7. Vehicular: a) Acto inseguro b) Condición insegura\\n8. Ambiente: a) Clasificación de residuos b) Fugas - derrames - emisiones c) Uso de recurso natural d) Condición climática insegura\\n9. Productos Químicos: a) Identificación de productos químicos b) Hojas de seguridad\\n10. Instalaciones: a) Inexistentes - defectuosas - inseguras\\n11. Otros\\n\\n## Reglas de conducta\\n- Tono cálido, directo y respetuoso. Frases cortas. Cero burocracia.\\n- El operario muchas veces no entiende, no está capacitado o no quiere entender: guialo con paciencia y ejemplos concretos.\\n- Si la respuesta es vaga (ej: \\\"en mi casa\\\", \\\"por ahí\\\", \\\"no sé\\\"), repreguntá con ejemplos hasta obtener algo útil, sin tratarlo de tonto.\\n- Si es un saludo o \\\"quiero hacer una denuncia\\\" sin contenido, explicá brevemente y preguntá QUÉ observó.\\n- No inventes datos. Lo que no sepas, dejalo en null.\\n- La severidad y la prioridad las calcula el sistema; vos solo estimás severidad como apoyo.\\n\\n## Detección de contenido inválido (accion=\\\"rechazar\\\")\\nRechazá si el mensaje es claramente:\\n- Una broma (ej: \\\"denuncio que Martínez se tiró un gas/pedo\\\", chistes de fútbol, \\\"es pecho frío por ser de River\\\").\\n- Un insulto o ataque personal (\\\"Fulano es un inútil\\\").\\n- Ajeno a seguridad laboral (política, deportes, temas personales).\\n- Spam o prueba sin sentido.\\n\\nOJO con la ambigüedad del lenguaje: \\\"tirarse un gas / un pedo\\\" es una broma de flatulencia → RECHAZAR.\\nPero \\\"olor a gas\\\", \\\"fuga de gas\\\", \\\"venteo de gas\\\" es un peligro real → tratar en serio.\\nSi detectás humor, doble sentido o burla hacia una persona, rechazá con amabilidad y sin seguir el chiste.\\nAnte la duda razonable de que sea un incidente real, NO rechaces: preguntá para aclarar.\\n\\n## Formato de salida (OBLIGATORIO)\\nRespondé ÚNICAMENTE con un objeto JSON válido, sin markdown ni texto extra:\\n{\\n  \\\"accion\\\": \\\"preguntar\\\" | \\\"confirmar\\\" | \\\"rechazar\\\",\\n  \\\"mensaje\\\": \\\"texto natural para enviar al operario por WhatsApp\\\",\\n  \\\"datos\\\": {\\n    \\\"observacion\\\": \\\"string o null\\\",\\n    \\\"lugar\\\": \\\"string o null\\\",\\n    \\\"servicio_obra\\\": \\\"string o null\\\",\\n    \\\"tipo\\\": \\\"inseguro\\\" | \\\"seguro\\\" | \\\"no_audita\\\" | null,\\n    \\\"personal\\\": \\\"propio\\\" | \\\"contratista\\\" | null,\\n    \\\"num_personas\\\": number | null,\\n    \\\"categoria\\\": number 1-11 | null,\\n    \\\"subitem\\\": \\\"a-h o null\\\",\\n    \\\"acciones_correctivas\\\": \\\"string o null\\\",\\n    \\\"severidad\\\": number 1-4 | null\\n  }\\n}\\n\\nEn \\\"datos\\\" incluí SIEMPRE todo lo que sepas hasta el momento (acumulado del historial + lo nuevo), no solo lo del último mensaje.\\nCuando accion=\\\"confirmar\\\", el campo \\\"mensaje\\\" puede ser un cierre corto; el sistema arma el resumen final con semáforo.\";\n\n// Leer del Router (ya trae la sesión cargada); Preparar contexto corre antes de la sesión.\nconst ctx = $('Router').first().json;\nconst session = ctx.session || null;\n\n// Recuperar datos acumulados e historial de la sesión (si existe)\nconst datosPrevios = (session && session.datos) ? { ...session.datos } : {};\nconst historial = Array.isArray(datosPrevios._historial) ? datosPrevios._historial : [];\n\n// No mandamos el historial interno como \"dato\" al modelo\nconst datosLimpios = { ...datosPrevios };\ndelete datosLimpios._historial;\n\n// Contexto del estado actual para el system prompt\nconst systemContent = PROMPT_ORQUESTADOR +\n  `\\n\\n## Datos ya recolectados hasta ahora\\n` +\n  JSON.stringify(datosLimpios, null, 2);\n\n// Armar los mensajes: system + historial + mensaje actual\nconst messages = [{ role: 'system', content: systemContent }];\nfor (const turno of historial) {\n  if (turno && turno.role && turno.content) {\n    messages.push({ role: turno.role, content: turno.content });\n  }\n}\nmessages.push({ role: 'user', content: ctx.text || '' });\n\nconst groqBody = {\n  model: $env.GROQ_TEXT_MODEL || 'llama-3.3-70b-versatile',\n  temperature: 0.3,\n  response_format: { type: 'json_object' },\n  messages,\n};\n\nreturn [{ json: { ...ctx, session, datosPrevios: datosLimpios, historial, groqBody } }];"
       }
     },
     {
-      "id": "nodo-10",
-      "name": "LLM texto",
+      "id": "nodo-11",
+      "name": "LLM orquestador",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -287,20 +255,20 @@
       }
     },
     {
-      "id": "nodo-11",
-      "name": "Armar respuesta",
+      "id": "nodo-12",
+      "name": "Procesar orquestador",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1600,
-        150
+        1400,
+        300
       ],
       "parameters": {
-        "jsCode": "// Nodo \"Armar respuesta\": procesa la salida del LLM (visión o texto), normaliza,\n// detecta datos faltantes y arma la respuesta al operador + el payload de persistencia.\n// Recibe de \"LLM visión\" o de \"LLM texto\"; recupera el contexto del nodo que haya corrido.\nlet ctx;\ntry { ctx = $('Foto a base64').first().json; }\ncatch (e) { ctx = $('Armar prompt texto').first().json; }\n\nconst CATEGORIAS = {\n  1: 'Reacciones de las Personas', 2: 'Posiciones de las Personas',\n  3: 'Equipos de Protección Personal', 4: 'Herramientas y Equipos',\n  5: 'Procedimientos', 6: 'Orden y Aseo', 7: 'Vehicular', 8: 'Ambiente',\n  9: 'Productos Químicos', 10: 'Instalaciones', 11: 'Otros',\n};\nconst TIPO = { inseguro: 'Acto Inseguro', seguro: 'Acto Seguro', no_audita: 'No Audita' };\nconst SEMAFORO = { rojo: '🔴 Crítica', amarillo: '🟡 Atención', verde: '🟢 Leve' };\n\n// --- parsear la salida del LLM (tolerante a fences de markdown) ---\nlet datos = null;\ntry {\n  const content = $input.first().json.choices[0].message.content;\n  datos = JSON.parse(content.replace(/```json|```/g, '').trim());\n} catch (e) { /* LLM caído o respuesta inválida */ }\n\nif (!datos) {\n  return [{ json: { persist: {\n    reporter_hash: ctx.hash,\n    reply: '😕 No pude procesar tu mensaje en este momento. Probá de nuevo en unos minutos, o entregá la tarjeta en papel como siempre.',\n  } } }];\n}\n\n// --- normalizar + prioridad determinística (el semáforo no se delega al LLM) ---\nif (ctx.accion === 'completar') datos = { ...ctx.session.datos, ...datos };\ndatos.tipo = ['inseguro', 'seguro', 'no_audita'].includes(datos.tipo) ? datos.tipo : 'inseguro';\ndatos.severidad = Math.min(4, Math.max(1, Number(datos.severidad) || 1));\ndatos.prioridad = datos.tipo === 'seguro' ? 'verde'\n  : datos.severidad >= 3 ? 'rojo'\n  : datos.severidad === 2 ? 'amarillo' : 'verde';\nconst cat = Number(datos.categoria);\ndatos.categoria = cat >= 1 && cat <= 11 ? cat : null;\ndatos.fecha_obs = datos.fecha_obs || datos.fecha || null;\ndelete datos.fecha;\nif (ctx.fotoB64) datos.origen = 'foto';\nif (!datos.origen) datos.origen = 'virtual';\n\n// --- ¿falta algo crítico? repreguntar SOLO eso ---\nconst faltan = [];\nif (!datos.observacion) faltan.push('*qué observaste* (contame brevemente)');\nif (!datos.lugar) faltan.push('*dónde fue* (sector / locación)');\n\nlet session, reply;\nif (faltan.length) {\n  session = { estado_flujo: 'awaiting_field', datos };\n  reply = (ctx.fotoB64 ? '📸 Recibí tu tarjeta, ¡gracias! ' : '¡Gracias por reportar! ') +\n    `Me falta un dato: ${faltan.join(' y ')}.`;\n} else {\n  session = { estado_flujo: 'awaiting_confirm', datos };\n  const lineas = [\n    '📋 *Resumen de tu observación*',\n    `📍 Lugar: ${datos.lugar}`,\n    datos.servicio_obra ? `🏗 Servicio/Obra: ${datos.servicio_obra}` : null,\n    `🏷 Tipo: ${TIPO[datos.tipo]}`,\n    datos.categoria ? `📂 Categoría: ${datos.categoria} · ${CATEGORIAS[datos.categoria]}${datos.subitem ? ` (${datos.subitem})` : ''}` : null,\n    `📝 ${datos.observacion}`,\n    datos.acciones_correctivas ? `🛠 Acción inmediata: ${datos.acciones_correctivas}` : '🛠 Acción inmediata: (sin registrar)',\n    `🚦 Prioridad: ${SEMAFORO[datos.prioridad]}`,\n    '',\n    'Respondé *OK* para confirmar, o escribí lo que haya que corregir.',\n  ].filter((l) => l !== null);\n  reply = lineas.join('\\n');\n}\n\nconst persist = { reporter_hash: ctx.hash, session, reply };\nif (ctx.fotoB64) {          // la foto se guarda una sola vez, al extraer\n  persist.foto_base64 = ctx.fotoB64;\n  persist.foto_mime = ctx.mediaType || 'image/jpeg';\n}\n\nreturn [{ json: { persist } }];"
+        "jsCode": "// Nodo \"Procesar orquestador\": interpreta la decisión del LLM (preguntar/confirmar/rechazar),\n// arma la respuesta al operario, actualiza la sesión con el historial y prepara la persistencia.\nconst ctx = $('Orquestador').first().json;\n\nconst CATEGORIAS = {\n  1: 'Reacciones de las Personas', 2: 'Posiciones de las Personas',\n  3: 'Equipos de Protección Personal', 4: 'Herramientas y Equipos',\n  5: 'Procedimientos', 6: 'Orden y Aseo', 7: 'Vehicular', 8: 'Ambiente',\n  9: 'Productos Químicos', 10: 'Instalaciones', 11: 'Otros',\n};\nconst TIPO = { inseguro: 'Acto Inseguro', seguro: 'Acto Seguro', no_audita: 'No Audita' };\nconst SEMAFORO = { rojo: '🔴 Crítica', amarillo: '🟡 Atención', verde: '🟢 Leve' };\n\n// --- parsear salida del LLM (tolerante a fences / respuesta inválida) ---\nlet out = null;\ntry {\n  const content = $input.first().json.choices[0].message.content;\n  out = JSON.parse(content.replace(/```json|```/g, '').trim());\n} catch (e) { /* LLM caído o JSON inválido */ }\n\nif (!out || !out.accion) {\n  return [{ json: { persist: {\n    reporter_hash: ctx.hash,\n    reply: '😕 Se me complicó procesar tu mensaje. Probá de nuevo en unos segundos, o entregá la tarjeta en papel como siempre.',\n  } } }];\n}\n\n// --- fusionar datos: lo previo + lo nuevo (lo nuevo pisa) ---\nconst datos = { ...(ctx.datosPrevios || {}), ...(out.datos || {}) };\n\n// normalizaciones defensivas\ndatos.tipo = ['inseguro', 'seguro', 'no_audita'].includes(datos.tipo) ? datos.tipo : 'inseguro';\ndatos.severidad = Math.min(4, Math.max(1, Number(datos.severidad) || 1));\nconst cat = Number(datos.categoria);\ndatos.categoria = cat >= 1 && cat <= 11 ? cat : null;\n// prioridad determinística (no se delega al LLM)\ndatos.prioridad = datos.tipo === 'seguro' ? 'verde'\n  : datos.severidad >= 3 ? 'rojo'\n  : datos.severidad === 2 ? 'amarillo' : 'verde';\n\n// metadata de Twilio\nif (ctx.twilioTimestamp) datos.timestamp_mensaje = ctx.twilioTimestamp;\nif (ctx.latitud != null) datos.latitud = ctx.latitud;\nif (ctx.longitud != null) datos.longitud = ctx.longitud;\n\n// --- actualizar historial de la conversación ---\nconst historial = Array.isArray(ctx.historial) ? [...ctx.historial] : [];\nhistorial.push({ role: 'user', content: ctx.text || '' });\nhistorial.push({ role: 'assistant', content: out.mensaje || '' });\n// acotar historial para no crecer indefinidamente\nwhile (historial.length > 12) historial.shift();\n\nlet reply, session;\n\nif (out.accion === 'rechazar') {\n  // contenido no válido: cerrar sesión, no persistir observación\n  reply = out.mensaje ||\n    '😊 Esto no parece una observación de seguridad. Si necesitás ayuda, hablá con tu supervisor de HSE.';\n  session = null;\n} else if (out.accion === 'confirmar') {\n  // tenemos lo esencial: armar resumen determinístico y pedir OK\n  // red de seguridad: nunca confirmar \"sin categoría\"\n  if (!datos.categoria) datos.categoria = 11; // Otros\n  const lineas = [\n    '📋 *Resumen de tu observación*',\n    `📍 Lugar: ${datos.lugar || '(sin especificar)'}`,\n    datos.servicio_obra ? `🏗 Servicio/Obra: ${datos.servicio_obra}` : null,\n    `🏷 Tipo: ${TIPO[datos.tipo]}`,\n    datos.categoria ? `📂 Categoría: ${datos.categoria} · ${CATEGORIAS[datos.categoria]}${datos.subitem ? ` (${datos.subitem})` : ''}` : null,\n    `📝 ${datos.observacion || '(sin descripción)'}`,\n    datos.acciones_correctivas ? `🛠 Acción inmediata: ${datos.acciones_correctivas}` : '🛠 Acción inmediata: (sin registrar)',\n    `🚦 Prioridad: ${SEMAFORO[datos.prioridad]}`,\n    '',\n    'Respondé *OK* para confirmar, o escribí lo que haya que corregir.',\n  ].filter((l) => l !== null);\n  reply = lineas.join('\\n');\n  session = { estado_flujo: 'awaiting_confirm', datos: { ...datos, _historial: historial } };\n} else {\n  // preguntar: seguimos recolectando\n  reply = out.mensaje || '¿Me contás un poco más?';\n  session = { estado_flujo: 'awaiting_orchestrator', datos: { ...datos, _historial: historial } };\n}\n\nreturn [{ json: { persist: { reporter_hash: ctx.hash, session, reply } } }];"
       }
     },
     {
-      "id": "nodo-12",
+      "id": "nodo-13",
       "name": "Finalizar observación",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -310,19 +278,6 @@
       ],
       "parameters": {
         "jsCode": "// Nodo \"Finalizar observación\": el operador confirmó el resumen.\n// El borrador de la sesión se convierte en observación definitiva (la API devuelve el folio).\nconst ctx = $input.first().json;\nconst datos = (ctx.session && ctx.session.datos) || {};\n\nreturn [{ json: { persist: {\n  reporter_hash: ctx.hash,\n  observacion: { ...datos, canal: 'whatsapp', raw_llm_json: JSON.stringify(datos) },\n  session: null,\n  reply: '✅ ¡Listo! Tu observación quedó registrada con el folio *{{FOLIO}}*.\\n\\n' +\n    'El equipo de HSE ya la puede ver en el tablero. Gracias por sumar a la seguridad de todos. 👷‍♂️',\n} } }];"
-      }
-    },
-    {
-      "id": "nodo-13",
-      "name": "Mensaje de ayuda",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1000,
-        680
-      ],
-      "parameters": {
-        "jsCode": "// Nodo \"Mensaje de ayuda\": saludo o mensaje demasiado corto para ser una observación.\nconst ctx = $input.first().json;\n\nreturn [{ json: { persist: {\n  reporter_hash: ctx.hash,\n  reply: '👷 *Tarjeta Digital HSE*\\n\\n' +\n    'Registrá tu observación de seguridad sin moverte del lugar:\\n\\n' +\n    '📸 Mandá una *foto* de tu tarjeta de observaciones completa, o\\n' +\n    '✍️ *Contame directamente* qué viste: qué pasó, dónde, y qué se hizo en el momento.\\n\\n' +\n    '🔒 Es anónimo: no guardamos tu número de teléfono.',\n} } }];"
       }
     },
     {
@@ -440,20 +395,6 @@
         ],
         [
           {
-            "node": "Armar prompt texto",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Armar prompt texto",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
             "node": "Finalizar observación",
             "type": "main",
             "index": 0
@@ -461,7 +402,7 @@
         ],
         [
           {
-            "node": "Mensaje de ayuda",
+            "node": "Orquestador",
             "type": "main",
             "index": 0
           }
@@ -501,22 +442,33 @@
         ]
       ]
     },
-    "Armar prompt texto": {
+    "Orquestador": {
       "main": [
         [
           {
-            "node": "LLM texto",
+            "node": "LLM orquestador",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "LLM texto": {
+    "LLM orquestador": {
       "main": [
         [
           {
-            "node": "Armar respuesta",
+            "node": "Procesar orquestador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar orquestador": {
+      "main": [
+        [
+          {
+            "node": "Persistir",
             "type": "main",
             "index": 0
           }
@@ -535,17 +487,6 @@
       ]
     },
     "Finalizar observación": {
-      "main": [
-        [
-          {
-            "node": "Persistir",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Mensaje de ayuda": {
       "main": [
         [
           {

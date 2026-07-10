@@ -189,7 +189,6 @@ app.post('/api/bot/persist', (req, res) => {
     const name = `${randomUUID()}.${ext}`;
     writeFileSync(join(MEDIA_DIR, name), Buffer.from(foto_base64, 'base64'));
     foto_path = name;
-    // la foto queda ligada al borrador: al confirmar, viaja a la observación final
     if (session && session.datos) session.datos.foto_path = foto_path;
   }
 
@@ -201,8 +200,8 @@ app.post('/api/bot/persist', (req, res) => {
       INSERT INTO observaciones
         (canal, reporter_hash, servicio_obra, lugar, fecha_obs, tipo, personal, num_personas,
          categoria, subitem, observacion, acciones_correctivas, severidad, prioridad,
-         origen, foto_path, raw_llm_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         origen, foto_path, raw_llm_json, timestamp_mensaje, latitud, longitud)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       o.canal || 'whatsapp', reporter_hash,
       o.servicio_obra || null, o.lugar || null, o.fecha_obs || null,
@@ -217,25 +216,102 @@ app.post('/api/bot/persist', (req, res) => {
       ['verde', 'amarillo', 'rojo'].includes(o.prioridad) ? o.prioridad : 'verde',
       o.origen === 'foto' ? 'foto' : 'virtual',
       o.foto_path || foto_path,
-      o.raw_llm_json ? String(o.raw_llm_json) : null
+      o.raw_llm_json ? String(o.raw_llm_json) : null,
+      o.timestamp_mensaje || null,
+      o.latitud != null ? Number(o.latitud) : null,
+      o.longitud != null ? Number(o.longitud) : null
     );
     out = { ...out, id: r.lastInsertRowid, folio: folio(r.lastInsertRowid) };
+
+    // Actualizar estadísticas del usuario (anti-abuso)
+    db.prepare(`
+      INSERT INTO user_stats (reporter_hash, total_reportes, reportes_validos, last_report_time)
+      VALUES (?, 1, 1, datetime('now'))
+      ON CONFLICT(reporter_hash) DO UPDATE SET
+        total_reportes = total_reportes + 1,
+        reportes_validos = reportes_validos + 1,
+        last_report_time = datetime('now')
+    `).run(reporter_hash);
   }
 
   if (session === null) {
     db.prepare('DELETE FROM sessions WHERE reporter_hash = ?').run(reporter_hash);
   } else if (session) {
     db.prepare(`
-      INSERT INTO sessions (reporter_hash, estado_flujo, datos_parciales_json, updated_at)
-      VALUES (?, ?, ?, datetime('now'))
+      INSERT INTO sessions (reporter_hash, estado_flujo, datos_parciales_json,
+        pregunta_actual, respuestas_parciales_json, inicio_pregunta, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(reporter_hash) DO UPDATE SET
         estado_flujo = excluded.estado_flujo,
         datos_parciales_json = excluded.datos_parciales_json,
+        pregunta_actual = excluded.pregunta_actual,
+        respuestas_parciales_json = excluded.respuestas_parciales_json,
+        inicio_pregunta = excluded.inicio_pregunta,
         updated_at = excluded.updated_at
-    `).run(reporter_hash, session.estado_flujo, JSON.stringify(session.datos || {}));
+    `).run(
+      reporter_hash,
+      session.estado_flujo,
+      JSON.stringify(session.datos || {}),
+      session.pregunta_actual || null,
+      session.respuestas_parciales_json || null,
+      session.inicio_pregunta || null
+    );
   }
 
   res.json(out);
+});
+
+// ---------------------------------------------------------------------------
+// API: Reportes fraudulentos (flagged)
+// ---------------------------------------------------------------------------
+
+app.post('/api/bot/flag', (req, res) => {
+  const { reporter_hash, razon, observacion_id } = req.body || {};
+  if (!reporter_hash) return res.status(400).json({ error: 'falta reporter_hash' });
+
+  db.prepare(`
+    INSERT INTO flagged_reports (reporter_hash, razon, observacion_id)
+    VALUES (?, ?, ?)
+  `).run(reporter_hash, razon || 'contenido_dudoso', observacion_id || null);
+
+  // Incrementar contador de rechazos y bloquear si hay reincidencia
+  db.prepare(`
+    INSERT INTO user_stats (reporter_hash, total_reportes, reportes_rechazados, last_report_time)
+    VALUES (?, 1, 1, datetime('now'))
+    ON CONFLICT(reporter_hash) DO UPDATE SET
+      total_reportes = total_reportes + 1,
+      reportes_rechazados = reportes_rechazados + 1,
+      last_report_time = datetime('now'),
+      estado = CASE
+        WHEN reportes_rechazados >= 2 THEN 'bloqueado_temporal'
+        ELSE estado
+      END,
+      razon_bloqueo = CASE
+        WHEN reportes_rechazados >= 2 THEN 'Múltiples reportes rechazados'
+        ELSE razon_bloqueo
+      END,
+      desbloqueado_en = CASE
+        WHEN reportes_rechazados >= 2 THEN datetime('now', '+30 minutes')
+        ELSE desbloqueado_en
+      END
+  `).run(reporter_hash);
+
+  res.json({ ok: true });
+});
+
+app.get('/api/flagged', (_req, res) => {
+  const rows = db.prepare(`
+    SELECT * FROM flagged_reports WHERE resuelto = 0 ORDER BY created_at DESC LIMIT 50
+  `).all();
+  res.json(rows);
+});
+
+app.post('/api/flagged/:id/resolver', (req, res) => {
+  const { nota_supervisor, resuelto_por } = req.body || {};
+  db.prepare(`
+    UPDATE flagged_reports SET resuelto = 1, nota_supervisor = ?, resuelto_por = ? WHERE id = ?
+  `).run(nota_supervisor || null, resuelto_por || 'supervisor', req.params.id);
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => console.log(`[dashboard] escuchando en :${PORT}`));

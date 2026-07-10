@@ -15,16 +15,17 @@ const salidaJson = prompt('salida-json.md');
 const conComunes = (p) => p.replaceAll('__TAXONOMIA__', taxonomia).replaceAll('__SALIDA_JSON__', salidaJson);
 const promptExtraccion = conComunes(prompt('extraccion-tarjeta.md'));
 const promptClasificacion = conComunes(prompt('clasificacion-texto.md'));
+const promptOrquestador = prompt('orquestador.md').replaceAll('__TAXONOMIA__', taxonomia);
 
 const code = {
   prepararContexto: src('01-preparar-contexto.js'),
   router: src('02-router.js'),
   fotoABase64: src('03-foto-a-base64.js').replace('__PROMPT_EXTRACCION__', JSON.stringify(promptExtraccion)),
-  armarPromptTexto: src('04-armar-prompt-texto.js').replace('__PROMPT_CLASIFICACION__', JSON.stringify(promptClasificacion)),
   armarRespuesta: src('05-armar-respuesta.js'),
   finalizar: src('06-finalizar.js'),
-  ayuda: src('07-ayuda.js'),
   armarTwiml: src('08-armar-twiml.js'),
+  orquestador: src('14-orquestador.js').replace('__PROMPT_ORQUESTADOR__', JSON.stringify(promptOrquestador)),
+  procesarOrquestador: src('15-procesar-orquestador.js'),
 };
 
 const codeNode = (name, jsCode, position, extra = {}) => ({
@@ -94,8 +95,8 @@ const nodes = [
     typeVersion: 3.2,
     position: [800, 300],
     parameters: {
-      rules: { values: ['foto', 'nueva_texto', 'completar', 'confirmar'].map(switchRule) },
-      options: { fallbackOutput: 'extra' }, // 5.ª salida: ayuda
+      rules: { values: ['foto', 'confirmar'].map(switchRule) },
+      options: { fallbackOutput: 'extra' }, // 3.ª salida: orquestador (todo el resto)
     },
   },
   // --- Flujo A: foto de la tarjeta ---
@@ -114,14 +115,13 @@ const nodes = [
   },
   codeNode('Foto a base64', code.fotoABase64, [1200, 0]),
   groqNode('LLM visión', [1400, 0]),
-  // --- Flujo B: texto (nuevo o completar borrador) ---
-  codeNode('Armar prompt texto', code.armarPromptTexto, [1000, 300]),
-  groqNode('LLM texto', [1200, 300]),
-  // --- convergencia de A y B ---
-  codeNode('Armar respuesta', code.armarRespuesta, [1600, 150]),
-  // --- confirmación y ayuda ---
+  codeNode('Armar respuesta', code.armarRespuesta, [1600, 0]),
+  // --- Flujo B: Orquestador conversacional (LLM decide preguntar/confirmar/rechazar) ---
+  codeNode('Orquestador', code.orquestador, [1000, 300]),
+  groqNode('LLM orquestador', [1200, 300]),
+  codeNode('Procesar orquestador', code.procesarOrquestador, [1400, 300]),
+  // --- confirmación ---
   codeNode('Finalizar observación', code.finalizar, [1000, 520]),
-  codeNode('Mensaje de ayuda', code.ayuda, [1000, 680]),
   // --- persistencia única + respuesta a Twilio ---
   {
     name: 'Persistir',
@@ -171,24 +171,24 @@ const connections = connect([
   ['Router', [main('Switch Acción')]],
   ['Switch Acción', [
     { ...main('Descargar foto'), _out: 0 },        // foto
-    { ...main('Armar prompt texto'), _out: 1 },    // nueva_texto
-    { ...main('Armar prompt texto'), _out: 2 },    // completar
-    { ...main('Finalizar observación'), _out: 3 }, // confirmar
-    { ...main('Mensaje de ayuda'), _out: 4 },      // fallback: ayuda
+    { ...main('Finalizar observación'), _out: 1 }, // confirmar
+    { ...main('Orquestador'), _out: 2 },           // fallback: orquestador (todo el resto)
   ]],
   ['Descargar foto', [main('Foto a base64')]],
   ['Foto a base64', [main('LLM visión')]],
   ['LLM visión', [main('Armar respuesta')]],
-  ['Armar prompt texto', [main('LLM texto')]],
-  ['LLM texto', [main('Armar respuesta')]],
+  // Flujo Orquestador conversacional
+  ['Orquestador', [main('LLM orquestador')]],
+  ['LLM orquestador', [main('Procesar orquestador')]],
+  ['Procesar orquestador', [main('Persistir')]],
   ['Armar respuesta', [main('Persistir')]],
   ['Finalizar observación', [main('Persistir')]],
-  ['Mensaje de ayuda', [main('Persistir')]],
   ['Persistir', [main('Armar TwiML')]],
   ['Armar TwiML', [main('Responder a Twilio')]],
 ]);
 
 const workflow = {
+  id: 'hse-tarjeta-digital-whatsapp',
   name: 'HSE Tarjeta Digital — WhatsApp',
   nodes,
   connections,

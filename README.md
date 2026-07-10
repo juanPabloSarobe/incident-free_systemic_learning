@@ -15,6 +15,8 @@ Operador (WhatsApp) ──► Twilio Sandbox ──► cloudflared ──► n8n
 
 Tres contenedores (`docker-compose.yml`): **n8n** (orquestación del bot), **dashboard** (API + SQLite + tablero web) y **cloudflared** (túnel público para que Twilio alcance a n8n en la Mac mini).
 
+Si querés que el tablero sea visible desde Internet, también se levanta `cloudflared-dashboard`, que publica el HTML del dashboard en una URL temporal para compartirla con cualquiera.
+
 **Anonimato:** igual que la tarjeta de papel. El número de teléfono nunca se persiste — solo un HMAC para hilvanar la conversación multi-turno.
 
 ## Setup en la Mac mini (~30 min la primera vez)
@@ -84,6 +86,14 @@ método `POST`, y guardar.
 - Semáforo de prioridades abiertas (🔴/🟡/🟢).
 - Barras por categoría de la tarjeta (las 11 de POSS016-F1) y por lugar/sector.
 - Tendencia semanal, tabla de últimas observaciones (con foto y cambio de estado) y **export a CSV** que abre directo en Excel.
+
+Para publicarlo fuera de la red local, levantá el túnel del dashboard y copiá la URL que imprime el contenedor:
+
+```bash
+docker compose logs cloudflared-dashboard 2>&1 | grep trycloudflare
+```
+
+Esa URL la puede abrir cualquier persona mientras el contenedor esté corriendo.
 
 Arranca con datos de demostración (`SEED_DEMO=true` en `.env`; poné `false` y borrá el volumen `hse_data` para empezar en limpio).
 
