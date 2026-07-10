@@ -104,7 +104,12 @@ app.get('/api/observaciones', (req, res) => {
   const rows = db.prepare(
     `SELECT * FROM observaciones ${where} ORDER BY created_at DESC LIMIT ?`
   ).all(...params, limit);
-  res.json(rows.map((r) => ({ ...r, folio: folio(r.id), categoria_nombre: CATEGORIAS[r.categoria] || null })));
+  const fotosPor = db.prepare('SELECT observacion_id, path FROM fotos ORDER BY id').all()
+    .reduce((m, f) => ((m[f.observacion_id] = m[f.observacion_id] || []).push(f.path), m), {});
+  res.json(rows.map((r) => ({
+    ...r, folio: folio(r.id), categoria_nombre: CATEGORIAS[r.categoria] || null,
+    fotos: fotosPor[r.id] || []
+  })));
 });
 
 app.post('/api/observaciones/:id/estado', (req, res) => {
@@ -135,8 +140,11 @@ app.get('/export.csv', (_req, res) => {
     ['Severidad', (r) => r.severidad],
     ['Prioridad', (r) => r.prioridad],
     ['Origen', (r) => r.origen],
-    ['Estado', (r) => r.estado]
+    ['Estado', (r) => r.estado],
+    ['Fotos adjuntas', (r) => fotosCount[r.id] || 0]
   ];
+  const fotosCount = db.prepare('SELECT observacion_id, COUNT(*) AS n FROM fotos GROUP BY observacion_id')
+    .all().reduce((m, f) => (m[f.observacion_id] = f.n, m), {});
   const esc = (v) => {
     const s = v == null ? '' : String(v);
     return /[";\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
@@ -175,12 +183,15 @@ app.get('/api/sessions/:hash', (req, res) => {
 });
 
 // Punto único de persistencia para n8n: guarda foto, observación final y/o sesión.
-// body: { reporter_hash, foto_base64?, foto_mime?, observacion?, session?|null, reply? }
-//  - session === null  -> borra la sesión (fin de conversación)
-//  - observacion       -> INSERT final, devuelve folio
+// body: { reporter_hash, foto_base64?, foto_mime?, observacion?, session?|null, reply?, foto_para? }
+//  - session === null              -> borra la sesión (fin de conversación)
+//  - session === 'awaiting_photos' -> tras insertar la observación, abre la ventana de adjuntos
+//  - observacion                   -> INSERT final, devuelve folio
+//  - foto_para (id)                -> adjunta la foto a esa observación ya registrada
 //  - reply se devuelve tal cual: permite que n8n arme el TwiML con un solo nodo
 app.post('/api/bot/persist', (req, res) => {
-  const { reporter_hash, foto_base64, foto_mime, observacion, session, reply } = req.body || {};
+  const { reporter_hash, foto_base64, foto_mime, observacion, reply, foto_para } = req.body || {};
+  let { session } = req.body || {};
   if (!reporter_hash) return res.status(400).json({ error: 'falta reporter_hash' });
 
   let foto_path = null;
@@ -189,10 +200,24 @@ app.post('/api/bot/persist', (req, res) => {
     const name = `${randomUUID()}.${ext}`;
     writeFileSync(join(MEDIA_DIR, name), Buffer.from(foto_base64, 'base64'));
     foto_path = name;
-    if (session && session.datos) session.datos.foto_path = foto_path;
+    if (!foto_para && session && typeof session === 'object' && session.datos) {
+      if (!session.datos.foto_path) {
+        session.datos.foto_path = foto_path;            // primera foto de tarjeta
+      } else {
+        // segunda/tercera foto durante el borrador (ej. dorso): va como adjunto al finalizar
+        session.datos.fotos_paths = [...(session.datos.fotos_paths || []), foto_path];
+      }
+    }
   }
 
   let out = { ok: true, foto_path, reply: reply ?? null };
+
+  // adjuntar evidencia a una observación ya registrada (ventana post-folio)
+  if (foto_para && foto_path) {
+    db.prepare('INSERT INTO fotos (observacion_id, path) VALUES (?, ?)').run(Number(foto_para), foto_path);
+    out.fotos_count = db.prepare('SELECT COUNT(*) AS n FROM fotos WHERE observacion_id = ?')
+      .get(Number(foto_para)).n;
+  }
 
   if (observacion) {
     const o = observacion;
@@ -223,6 +248,17 @@ app.post('/api/bot/persist', (req, res) => {
     );
     out = { ...out, id: r.lastInsertRowid, folio: folio(r.lastInsertRowid) };
 
+    // fotos tomadas durante el borrador (ej. dorso de la tarjeta) → adjuntos de la observación
+    if (Array.isArray(o.fotos_paths)) {
+      const ins = db.prepare('INSERT INTO fotos (observacion_id, path) VALUES (?, ?)');
+      for (const p of o.fotos_paths) if (p) ins.run(out.id, String(p));
+    }
+
+    // el nodo Finalizar pide abrir la ventana de adjuntos: recién acá conocemos el folio
+    if (session === 'awaiting_photos') {
+      session = { estado_flujo: 'awaiting_photos', datos: { observacion_id: out.id, folio: out.folio, fotos_count: 0 } };
+    }
+
     // Actualizar estadísticas del usuario (anti-abuso)
     db.prepare(`
       INSERT INTO user_stats (reporter_hash, total_reportes, reportes_validos, last_report_time)
@@ -233,6 +269,8 @@ app.post('/api/bot/persist', (req, res) => {
         last_report_time = datetime('now')
     `).run(reporter_hash);
   }
+
+  if (session === 'awaiting_photos') session = null; // sin observación insertada no hay ventana que abrir
 
   if (session === null) {
     db.prepare('DELETE FROM sessions WHERE reporter_hash = ?').run(reporter_hash);

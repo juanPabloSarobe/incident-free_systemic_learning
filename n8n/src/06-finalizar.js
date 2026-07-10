@@ -14,7 +14,9 @@ if (!datos.servicio_obra) datos.servicio_obra = 'No indicado';
 return [{ json: { persist: {
   reporter_hash: ctx.hash,
   observacion: { ...datos, canal: 'whatsapp', raw_llm_json: JSON.stringify(datos) },
-  session: null,
+  // la API abre la ventana de adjuntos con el folio recién asignado (10 min)
+  session: 'awaiting_photos',
   reply: '✅ ¡Listo! Tu observación quedó registrada con el folio *{{FOLIO}}*.\n\n' +
+    '📎 Si tenés *fotos de lo observado* (el equipo, el lugar, la tarjeta), mandámelas ahora y las adjunto al reporte.\n\n' +
     'El equipo de HSE ya la puede ver en el tablero. Gracias por sumar a la seguridad de todos. 👷‍♂️',
 } } }];

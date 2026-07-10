@@ -57,7 +57,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "// Nodo \"Router\": decide el camino mínimo. Toda la inteligencia conversacional vive\n// en el Orquestador (LLM). Acá solo separamos 3 caminos: foto, confirmación explícita\n// de un resumen pendiente, o el orquestador (todo el resto: saludos, texto, correcciones).\nconst ctx = $('Preparar contexto').first().json;\nconst session = $input.first().json.session || null;\nconst t = (ctx.text || '').toLowerCase().trim();\n\nconst esConfirmacion = /^(ok|oka|okey|si|sí|dale|confirmo|listo|va|perfecto|correcto)\\b/.test(t);\n\nlet accion;\nif (ctx.hasMedia) {\n  accion = 'foto';                                   // Flujo A: foto de la tarjeta de papel\n} else if (ctx.hasAudio) {\n  accion = 'audio';                                  // Flujo C: nota de voz → Whisper → orquestador\n} else if (session && session.estado_flujo === 'awaiting_confirm' && esConfirmacion) {\n  accion = 'confirmar';                              // el operario aprobó el resumen\n} else {\n  accion = 'orquestador';                            // TODO lo demás lo maneja el LLM\n}\n\nreturn [{ json: { ...ctx, session, accion } }];"
+        "jsCode": "// Nodo \"Router\": decide el camino mínimo. Toda la inteligencia conversacional vive\n// en el Orquestador (LLM). Caminos: foto (tarjeta), adjuntar_foto (evidencia post-folio),\n// audio, confirmación explícita de un resumen pendiente, u orquestador (todo el resto).\nconst ctx = $('Preparar contexto').first().json;\nlet session = $input.first().json.session || null;\nconst t = (ctx.text || '').toLowerCase().trim();\n\nconst esConfirmacion = /^(ok|oka|okey|si|sí|dale|confirmo|listo|va|perfecto|correcto)\\b/.test(t);\n\n// Ventana de adjuntos post-folio: vigente hasta 10 min después de la última actividad.\n// Cada foto adjuntada la renueva; cualquier texto/audio la cierra (empieza charla nueva).\nconst VENTANA_FOTOS_MIN = 10;\nlet ventanaFotos = false;\nif (session && session.estado_flujo === 'awaiting_photos') {\n  const upd = new Date(String(session.updated_at || '').replace(' ', 'T') + 'Z').getTime();\n  ventanaFotos = Number.isFinite(upd) && (Date.now() - upd) / 60000 <= VENTANA_FOTOS_MIN;\n  if (!ctx.hasMedia || !ventanaFotos) session = null; // texto/audio o ventana vencida: conversación nueva\n}\n\nlet accion;\nif (ctx.hasMedia && ventanaFotos) {\n  accion = 'adjuntar_foto';                          // evidencia para el folio recién registrado\n} else if (ctx.hasMedia) {\n  accion = 'foto';                                   // Flujo A: foto de la tarjeta de papel\n} else if (ctx.hasAudio) {\n  accion = 'audio';                                  // Flujo C: nota de voz → Whisper → orquestador\n} else if (session && session.estado_flujo === 'awaiting_confirm' && esConfirmacion) {\n  accion = 'confirmar';                              // el operario aprobó el resumen\n} else {\n  accion = 'orquestador';                            // TODO lo demás lo maneja el LLM\n}\n\nreturn [{ json: { ...ctx, session, accion } }];"
       }
     },
     {
@@ -140,6 +140,29 @@
               },
               "renameOutput": true,
               "outputKey": "confirmar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "adjuntar_foto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "adjuntar_foto"
             }
           ]
         },
@@ -231,7 +254,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// Nodo \"Armar respuesta\": procesa la salida del LLM de visión (flujo foto), normaliza,\n// detecta datos faltantes y arma la respuesta al operador + el payload de persistencia.\nconst ctx = $('Foto a base64').first().json;\n\nconst CATEGORIAS = {\n  1: 'Reacciones de las Personas', 2: 'Posiciones de las Personas',\n  3: 'Equipos de Protección Personal', 4: 'Herramientas y Equipos',\n  5: 'Procedimientos', 6: 'Orden y Aseo', 7: 'Vehicular', 8: 'Ambiente',\n  9: 'Productos Químicos', 10: 'Instalaciones', 11: 'Otros',\n};\nconst TIPO = { inseguro: 'Acto Inseguro', seguro: 'Acto Seguro', no_audita: 'No Audita' };\nconst SEMAFORO = { rojo: '🔴 Crítica', amarillo: '🟡 Atención', verde: '🟢 Leve' };\n\n// --- parsear la salida del LLM (tolerante a fences de markdown) ---\nlet datos = null;\ntry {\n  const content = $input.first().json.choices[0].message.content;\n  datos = JSON.parse(content.replace(/```json|```/g, '').trim());\n} catch (e) { /* LLM caído o respuesta inválida */ }\n\nif (!datos) {\n  return [{ json: { persist: {\n    reporter_hash: ctx.hash,\n    reply: '😕 No pude procesar tu mensaje en este momento. Probá de nuevo en unos minutos, o entregá la tarjeta en papel como siempre.',\n  } } }];\n}\n\n// --- Legibilidad / confianza de la lectura de la foto ---\nconst legible = datos.tarjeta_legible !== false;\nconst confianza = typeof datos.confianza === 'number' ? datos.confianza : 1;\nconst dudas = Array.isArray(datos.dudas) ? datos.dudas.filter(Boolean) : [];\n\n// Si la tarjeta está en blanco, no es una tarjeta o es ilegible: pedir reenvío o texto.\nif (!legible || confianza < 0.35) {\n  const motivo = dudas.length ? ` (${dudas.slice(0, 2).join('; ')})` : '';\n  return [{ json: { persist: {\n    reporter_hash: ctx.hash,\n    session: null,\n    reply: '📸 No pude leer bien la tarjeta' + motivo + '.\\n\\n' +\n      'Probá sacarle una foto más nítida, con buena luz y sin sombras/suciedad, o *contame por texto* qué observaste y dónde.',\n  } } }];\n}\n\n// --- Integrar metadata de Twilio ---\nif (ctx.twilioTimestamp) datos.timestamp_mensaje = ctx.twilioTimestamp;\nif (ctx.latitud) datos.latitud = ctx.latitud;\nif (ctx.longitud) datos.longitud = ctx.longitud;\n\n// --- normalizar + prioridad determinística (el semáforo no se delega al LLM) ---\ndatos.tipo = ['inseguro', 'seguro', 'no_audita'].includes(datos.tipo) ? datos.tipo : 'inseguro';\ndatos.severidad = Math.min(4, Math.max(1, Number(datos.severidad) || 1));\ndatos.prioridad = datos.tipo === 'seguro' ? 'verde'\n  : datos.severidad >= 3 ? 'rojo'\n  : datos.severidad === 2 ? 'amarillo' : 'verde';\nconst cat = Number(datos.categoria);\ndatos.categoria = cat >= 1 && cat <= 11 ? cat : null;\ndatos.fecha_obs = datos.fecha_obs || datos.fecha || null;\ndelete datos.fecha;\ndatos.origen = 'foto';\n// no persistir campos auxiliares de lectura\ndelete datos.tarjeta_legible;\ndelete datos.confianza;\ndelete datos.dudas;\n\n// --- ¿falta algo crítico? repreguntar; el orquestador continúa la charla ---\nconst faltan = [];\nif (!datos.observacion) faltan.push('*qué observaste* (contame brevemente)');\nif (!datos.lugar) faltan.push('*dónde fue* (sector / locación)');\n\nlet session, reply;\nif (faltan.length) {\n  // dejamos el borrador en sesión: si el operario responde por texto, lo toma el orquestador\n  session = { estado_flujo: 'awaiting_orchestrator', datos: { ...datos, _historial: [] } };\n  reply = '📸 Recibí tu tarjeta, ¡gracias! Me falta un dato: ' + faltan.join(' y ') + '.';\n} else {\n  session = { estado_flujo: 'awaiting_confirm', datos };\n  const lineas = [\n    '📋 *Resumen de tu observación*',\n    datos.fecha_obs ? `📅 Fecha: ${datos.fecha_obs}` : '📅 Fecha: (sin fecha en la tarjeta — se usa la de carga)',\n    `📍 Lugar: ${datos.lugar}`,\n    datos.servicio_obra ? `🏗 Servicio/Obra: ${datos.servicio_obra}` : null,\n    `🏷 Tipo: ${TIPO[datos.tipo]}`,\n    datos.categoria ? `📂 Categoría: ${datos.categoria} · ${CATEGORIAS[datos.categoria]}${datos.subitem ? ` (${datos.subitem})` : ''}` : null,\n    `📝 ${datos.observacion}`,\n    datos.acciones_correctivas ? `🛠 Acción inmediata: ${datos.acciones_correctivas}` : '🛠 Acción inmediata: (sin registrar)',\n    `🚦 Prioridad: ${SEMAFORO[datos.prioridad]}`,\n    // si el modelo tuvo dudas al leer, las mostramos para que el operario las verifique\n    dudas.length ? '' : null,\n    dudas.length ? `⚠️ Verificá esto que no leí con certeza: ${dudas.slice(0, 3).join('; ')}` : null,\n    '',\n    'Respondé *OK* para confirmar, o escribí lo que haya que corregir.',\n  ].filter((l) => l !== null);\n  reply = lineas.join('\\n');\n}\n\nconst persist = { reporter_hash: ctx.hash, session, reply };\nif (ctx.fotoB64) {          // la foto se guarda una sola vez, al extraer\n  persist.foto_base64 = ctx.fotoB64;\n  persist.foto_mime = ctx.mediaType || 'image/jpeg';\n}\n\nreturn [{ json: { persist } }];"
+        "jsCode": "// Nodo \"Armar respuesta\": procesa la salida del LLM de visión (flujo foto), normaliza,\n// detecta datos faltantes y arma la respuesta al operador + el payload de persistencia.\nconst ctx = $('Foto a base64').first().json;\n\nconst CATEGORIAS = {\n  1: 'Reacciones de las Personas', 2: 'Posiciones de las Personas',\n  3: 'Equipos de Protección Personal', 4: 'Herramientas y Equipos',\n  5: 'Procedimientos', 6: 'Orden y Aseo', 7: 'Vehicular', 8: 'Ambiente',\n  9: 'Productos Químicos', 10: 'Instalaciones', 11: 'Otros',\n};\nconst TIPO = { inseguro: 'Acto Inseguro', seguro: 'Acto Seguro', no_audita: 'No Audita' };\nconst SEMAFORO = { rojo: '🔴 Crítica', amarillo: '🟡 Atención', verde: '🟢 Leve' };\n\n// --- parsear la salida del LLM (tolerante a fences de markdown) ---\nlet datos = null;\ntry {\n  const content = $input.first().json.choices[0].message.content;\n  datos = JSON.parse(content.replace(/```json|```/g, '').trim());\n} catch (e) { /* LLM caído o respuesta inválida */ }\n\nif (!datos) {\n  return [{ json: { persist: {\n    reporter_hash: ctx.hash,\n    reply: '😕 No pude procesar tu mensaje en este momento. Probá de nuevo en unos minutos, o entregá la tarjeta en papel como siempre.',\n  } } }];\n}\n\n// --- Legibilidad / confianza de la lectura de la foto ---\nconst legible = datos.tarjeta_legible !== false;\nconst confianza = typeof datos.confianza === 'number' ? datos.confianza : 1;\nconst dudas = Array.isArray(datos.dudas) ? datos.dudas.filter(Boolean) : [];\n\n// Si la tarjeta está en blanco, no es una tarjeta o es ilegible: pedir reenvío o texto.\nif (!legible || confianza < 0.35) {\n  const motivo = dudas.length ? ` (${dudas.slice(0, 2).join('; ')})` : '';\n  return [{ json: { persist: {\n    reporter_hash: ctx.hash,\n    session: null,\n    reply: '📸 No pude leer bien la tarjeta' + motivo + '.\\n\\n' +\n      'Probá sacarle una foto más nítida, con buena luz y sin sombras/suciedad, o *contame por texto* qué observaste y dónde.',\n  } } }];\n}\n\n// --- ¿Ya había un borrador (ej. mandó el frente y ahora el dorso)? Consolidar ---\n// Lo ya cargado gana; la foto nueva solo completa los campos vacíos.\nconst previos = (ctx.session && ctx.session.datos) || null;\nif (previos) {\n  for (const [k, v] of Object.entries(previos)) {\n    if (k === '_historial') continue;\n    if ((datos[k] == null || datos[k] === '') && v != null) datos[k] = v;\n  }\n  if (previos._historial) datos._historial = previos._historial;\n}\n\n// --- Integrar metadata de Twilio ---\nif (ctx.twilioTimestamp) datos.timestamp_mensaje = ctx.twilioTimestamp;\nif (ctx.latitud) datos.latitud = ctx.latitud;\nif (ctx.longitud) datos.longitud = ctx.longitud;\n\n// --- normalizar + prioridad determinística (el semáforo no se delega al LLM) ---\ndatos.tipo = ['inseguro', 'seguro', 'no_audita'].includes(datos.tipo) ? datos.tipo : 'inseguro';\ndatos.severidad = Math.min(4, Math.max(1, Number(datos.severidad) || 1));\ndatos.prioridad = datos.tipo === 'seguro' ? 'verde'\n  : datos.severidad >= 3 ? 'rojo'\n  : datos.severidad === 2 ? 'amarillo' : 'verde';\nconst cat = Number(datos.categoria);\ndatos.categoria = cat >= 1 && cat <= 11 ? cat : null;\ndatos.fecha_obs = datos.fecha_obs || datos.fecha || null;\ndelete datos.fecha;\ndatos.origen = 'foto';\n// no persistir campos auxiliares de lectura\ndelete datos.tarjeta_legible;\ndelete datos.confianza;\ndelete datos.dudas;\n\n// --- ¿falta algo crítico? repreguntar; el orquestador continúa la charla ---\nconst faltan = [];\nif (!datos.observacion) faltan.push('*qué observaste* (contame brevemente)');\nif (!datos.lugar) faltan.push('*dónde fue* (sector / locación)');\n\nlet session, reply;\nif (faltan.length) {\n  // dejamos el borrador en sesión: si el operario responde por texto, lo toma el orquestador\n  session = { estado_flujo: 'awaiting_orchestrator', datos: { ...datos, _historial: [] } };\n  reply = '📸 Recibí tu tarjeta, ¡gracias! Me falta un dato: ' + faltan.join(' y ') + '.';\n} else {\n  session = { estado_flujo: 'awaiting_confirm', datos };\n  const lineas = [\n    '📋 *Resumen de tu observación*',\n    datos.fecha_obs ? `📅 Fecha: ${datos.fecha_obs}` : '📅 Fecha: (sin fecha en la tarjeta — se usa la de carga)',\n    `📍 Lugar: ${datos.lugar}`,\n    datos.servicio_obra ? `🏗 Servicio/Obra: ${datos.servicio_obra}` : null,\n    `🏷 Tipo: ${TIPO[datos.tipo]}`,\n    datos.categoria ? `📂 Categoría: ${datos.categoria} · ${CATEGORIAS[datos.categoria]}${datos.subitem ? ` (${datos.subitem})` : ''}` : null,\n    `📝 ${datos.observacion}`,\n    datos.acciones_correctivas ? `🛠 Acción inmediata: ${datos.acciones_correctivas}` : '🛠 Acción inmediata: (sin registrar)',\n    `🚦 Prioridad: ${SEMAFORO[datos.prioridad]}`,\n    // si el modelo tuvo dudas al leer, las mostramos para que el operario las verifique\n    dudas.length ? '' : null,\n    dudas.length ? `⚠️ Verificá esto que no leí con certeza: ${dudas.slice(0, 3).join('; ')}` : null,\n    '',\n    'Respondé *OK* para confirmar, o escribí lo que haya que corregir.',\n  ].filter((l) => l !== null);\n  reply = lineas.join('\\n');\n}\n\nconst persist = { reporter_hash: ctx.hash, session, reply };\nif (ctx.fotoB64) {          // la foto se guarda una sola vez, al extraer\n  persist.foto_base64 = ctx.fotoB64;\n  persist.foto_mime = ctx.mediaType || 'image/jpeg';\n}\n\nreturn [{ json: { persist } }];"
       }
     },
     {
@@ -333,6 +356,49 @@
     },
     {
       "id": "nodo-13",
+      "name": "Descargar adjunto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        840
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.mediaUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.twilioAuth }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "nodo-14",
+      "name": "Adjuntar foto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        840
+      ],
+      "parameters": {
+        "jsCode": "// Nodo \"Adjuntar foto\": la observación ya tiene folio y el operario mandó una foto\n// dentro de la ventana de adjuntos. Se agrega como evidencia y se renueva la ventana.\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst ctx = $('Router').first().json;\nconst info = (ctx.session && ctx.session.datos) || {};\nconst n = (Number(info.fotos_count) || 0) + 1;\n\nreturn [{ json: { persist: {\n  reporter_hash: ctx.hash,\n  foto_base64: buf.toString('base64'),\n  foto_mime: ctx.mediaType || 'image/jpeg',\n  foto_para: info.observacion_id,\n  session: { estado_flujo: 'awaiting_photos', datos: { ...info, fotos_count: n } },\n  reply: `📎 Foto ${n} agregada al folio *${info.folio || ''}*. Mandá más si querés, o seguí con lo tuyo. 👍`,\n} } }];"
+      }
+    },
+    {
+      "id": "nodo-15",
       "name": "¿Se entendió?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -364,7 +430,7 @@
       }
     },
     {
-      "id": "nodo-14",
+      "id": "nodo-16",
       "name": "Orquestador",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -377,7 +443,7 @@
       }
     },
     {
-      "id": "nodo-15",
+      "id": "nodo-17",
       "name": "LLM orquestador",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -407,7 +473,7 @@
       }
     },
     {
-      "id": "nodo-16",
+      "id": "nodo-18",
       "name": "Procesar orquestador",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -420,7 +486,7 @@
       }
     },
     {
-      "id": "nodo-17",
+      "id": "nodo-19",
       "name": "Finalizar observación",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -429,11 +495,11 @@
         520
       ],
       "parameters": {
-        "jsCode": "// Nodo \"Finalizar observación\": el operador confirmó el resumen.\n// El borrador de la sesión se convierte en observación definitiva (la API devuelve el folio).\nconst ctx = $input.first().json;\nconst datos = { ...((ctx.session && ctx.session.datos) || {}) };\ndelete datos._historial; // el historial de chat no se persiste en la observación\n\n// Red de seguridad (cubre también el flujo foto, que no pasa por el orquestador):\n// nunca guardar fecha ni servicio en blanco.\nconst tz = $env.GENERIC_TIMEZONE || 'America/Argentina/Buenos_Aires';\nconst ahoraLocal = new Date().toLocaleString('sv-SE', { timeZone: tz }).slice(0, 16);\nif (!datos.fecha_obs || /^ahora$/i.test(String(datos.fecha_obs).trim())) datos.fecha_obs = ahoraLocal;\nif (!datos.servicio_obra) datos.servicio_obra = 'No indicado';\n\nreturn [{ json: { persist: {\n  reporter_hash: ctx.hash,\n  observacion: { ...datos, canal: 'whatsapp', raw_llm_json: JSON.stringify(datos) },\n  session: null,\n  reply: '✅ ¡Listo! Tu observación quedó registrada con el folio *{{FOLIO}}*.\\n\\n' +\n    'El equipo de HSE ya la puede ver en el tablero. Gracias por sumar a la seguridad de todos. 👷‍♂️',\n} } }];"
+        "jsCode": "// Nodo \"Finalizar observación\": el operador confirmó el resumen.\n// El borrador de la sesión se convierte en observación definitiva (la API devuelve el folio).\nconst ctx = $input.first().json;\nconst datos = { ...((ctx.session && ctx.session.datos) || {}) };\ndelete datos._historial; // el historial de chat no se persiste en la observación\n\n// Red de seguridad (cubre también el flujo foto, que no pasa por el orquestador):\n// nunca guardar fecha ni servicio en blanco.\nconst tz = $env.GENERIC_TIMEZONE || 'America/Argentina/Buenos_Aires';\nconst ahoraLocal = new Date().toLocaleString('sv-SE', { timeZone: tz }).slice(0, 16);\nif (!datos.fecha_obs || /^ahora$/i.test(String(datos.fecha_obs).trim())) datos.fecha_obs = ahoraLocal;\nif (!datos.servicio_obra) datos.servicio_obra = 'No indicado';\n\nreturn [{ json: { persist: {\n  reporter_hash: ctx.hash,\n  observacion: { ...datos, canal: 'whatsapp', raw_llm_json: JSON.stringify(datos) },\n  // la API abre la ventana de adjuntos con el folio recién asignado (10 min)\n  session: 'awaiting_photos',\n  reply: '✅ ¡Listo! Tu observación quedó registrada con el folio *{{FOLIO}}*.\\n\\n' +\n    '📎 Si tenés *fotos de lo observado* (el equipo, el lugar, la tarjeta), mandámelas ahora y las adjunto al reporte.\\n\\n' +\n    'El equipo de HSE ya la puede ver en el tablero. Gracias por sumar a la seguridad de todos. 👷‍♂️',\n} } }];"
       }
     },
     {
-      "id": "nodo-18",
+      "id": "nodo-20",
       "name": "Persistir",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -454,7 +520,7 @@
       }
     },
     {
-      "id": "nodo-19",
+      "id": "nodo-21",
       "name": "Armar TwiML",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -467,7 +533,7 @@
       }
     },
     {
-      "id": "nodo-20",
+      "id": "nodo-22",
       "name": "Responder a Twilio",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -561,7 +627,36 @@
         ],
         [
           {
+            "node": "Descargar adjunto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Orquestador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar adjunto": {
+      "main": [
+        [
+          {
+            "node": "Adjuntar foto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adjuntar foto": {
+      "main": [
+        [
+          {
+            "node": "Persistir",
             "type": "main",
             "index": 0
           }

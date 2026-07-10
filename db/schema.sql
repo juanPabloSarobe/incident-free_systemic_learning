@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Fotos de evidencia adjuntas a una observación (la foto de la tarjeta vive en observaciones.foto_path)
+CREATE TABLE IF NOT EXISTS fotos (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    observacion_id INTEGER NOT NULL,
+    path           TEXT NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fotos_obs ON fotos (observacion_id);
+
 -- Taxonomía de la tarjeta física, para joins legibles en tablero y export
 CREATE TABLE IF NOT EXISTS categorias (
     id     INTEGER PRIMARY KEY,
