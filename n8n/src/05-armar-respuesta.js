@@ -76,6 +76,7 @@ if (faltan.length) {
   session = { estado_flujo: 'awaiting_confirm', datos };
   const lineas = [
     '📋 *Resumen de tu observación*',
+    datos.fecha_obs ? `📅 Fecha: ${datos.fecha_obs}` : '📅 Fecha: (sin fecha en la tarjeta — se usa la de carga)',
     `📍 Lugar: ${datos.lugar}`,
     datos.servicio_obra ? `🏗 Servicio/Obra: ${datos.servicio_obra}` : null,
     `🏷 Tipo: ${TIPO[datos.tipo]}`,
