@@ -1,4 +1,33 @@
-# Guion de demo (~10 minutos)
+# Guiones de demo
+
+## Charla en el polo (20–30 min) — con el sitio de presentación
+
+La presentación vive en **`/presentacion/`** (mismo host que el tablero, p. ej. `http://localhost:3000/presentacion/` o la URL del túnel del dashboard). Navegación: flechas `← →`, botones en pantalla, swipe en el teléfono, `F` para pantalla completa, `#4` en la URL salta directo a un slide.
+
+| # | Slide | Tiempo | Qué contar |
+|---|---|---|---|
+| 1 | Portada — *Los near-misses mueren en el papel* | ~3 min | El problema: cada incidente evitado que no se reporta es aprendizaje perdido. |
+| 2 | Qué hicimos y por qué | ~4 min | La tarjeta real en pantalla. Decisión clave: no cambiar el procedimiento, sacarle la fricción. |
+| 3 | Cómo funciona | ~3 min | El diagrama WhatsApp → Twilio → n8n → IA → SQLite → Tablero. Anonimato. |
+| 4 | 🎯 Participá ahora | ~3 min | QR gigante. Acá se reparten las tarjetas impresas. El público manda observaciones en background el resto de la charla. |
+| 5 | Stack tecnológico | ~4 min | Todo free tier / open source en una Mac mini: el costo de experimentar es cero. |
+| 6 | Beneficios + estado + camino | ~4 min | Demo funcional sobre el dolor #1 priorizado por el vertical. Base seria, no producto terminado. |
+| 7 | Dashboard en vivo | ~5 min | **El clímax lo construyó la audiencia**: recorrer lo que mandaron, el semáforo, reírse de las milanesas. |
+| 8 | Cierre | ~2 min | COMPETIR Y COMPARTIR. Agradecimientos y QRs de contacto. |
+
+**Checklist previa (el día antes + 1 h antes):**
+
+- [ ] `docker compose up -d` en la Mac mini; workflow **Active** en n8n.
+- [ ] Túnel del bot arriba y URL cargada en Twilio (*Sandbox settings → When a message comes in*).
+- [ ] Túnel del dashboard arriba; abrir `.../presentacion/` en el navegador que va al proyector y dejarla cacheada.
+- [ ] Probar el **join desde un teléfono virgen** (QR del slide 4) y mandar foto + audio + texto de prueba.
+- [ ] Tarjetas de observación impresas para repartir en el slide 4.
+- [ ] Probar que los QRs escanean desde 3–4 metros de la pantalla proyectada.
+- [ ] Plan B sin wifi del auditorio: la presentación ya cacheada funciona; el bot depende solo del túnel de la Mac mini.
+
+---
+
+## Demo corta (~10 minutos)
 
 Preparación previa: `docker compose up -d`, workflow activo en n8n, webhook configurado en Twilio, tu teléfono ya unido al sandbox (`join <código>`), tablero abierto en pantalla grande ([http://localhost:3000](http://localhost:3000)).
 

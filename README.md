@@ -98,6 +98,10 @@ Esa URL la puede abrir cualquier persona mientras el contenedor esté corriendo.
 
 Arranca con datos de demostración (`SEED_DEMO=true` en `.env`; poné `false` y borrá el volumen `hse_data` para empezar en limpio).
 
+## Presentación para charlas
+
+En **`/presentacion/`** (mismo host que el tablero) hay un sitio de 8 slides para presentar el proyecto en vivo: problema → solución → QR de participación del público → stack → dashboard en vivo (iframe del tablero) → cierre con contactos. Todo estático y self-contained (QRs pre-generados en SVG, sin CDNs): funciona aunque la wifi del auditorio falle. Navegación con flechas, swipe y `F` para pantalla completa. El guion con tiempos está en [`docs/demo-script.md`](docs/demo-script.md).
+
 ## Desarrollo local (sin Docker)
 
 ```bash
