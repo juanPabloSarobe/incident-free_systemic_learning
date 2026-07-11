@@ -11,6 +11,7 @@ services:
       - GENERIC_TIMEZONE=${TZ:-America/Argentina/Buenos_Aires}
       - TZ=${TZ:-America/Argentina/Buenos_Aires}
       - N8N_SECURE_COOKIE=false                  # acceso por http://localhost en la LAN
+      - N8N_PROXY_HOPS=1                         # cloudflared agrega X-Forwarded-*; evita rate-limit mal calculado
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false       # los nodos Code leen $env (claves, secreto de hash)
       - NODE_FUNCTION_ALLOW_BUILTIN=crypto       # HMAC del teléfono en "Preparar contexto"
       - WEBHOOK_URL=${PUBLIC_URL:-http://localhost:5678/}

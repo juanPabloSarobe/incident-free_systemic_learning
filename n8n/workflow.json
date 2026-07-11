@@ -41,6 +41,7 @@
         400,
         300
       ],
+      "onError": "continueRegularOutput",
       "parameters": {
         "method": "GET",
         "url": "={{ $env.API_URL }}/api/sessions/{{ $json.hash }}",

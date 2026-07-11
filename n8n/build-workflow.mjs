@@ -93,6 +93,7 @@ const nodes = [
     type: 'n8n-nodes-base.httpRequest',
     typeVersion: 4.2,
     position: [400, 300],
+    onError: 'continueRegularOutput', // si la API temporalmente falla, seguir sin sesión
     parameters: { method: 'GET', url: '={{ $env.API_URL }}/api/sessions/{{ $json.hash }}', options: {} },
   },
   codeNode('Router', code.router, [600, 300]),
