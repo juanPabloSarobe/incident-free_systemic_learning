@@ -23,11 +23,12 @@ const code = {
   fotoABase64: src('03-foto-a-base64.js').replace('__PROMPT_EXTRACCION__', JSON.stringify(promptExtraccion)),
   armarRespuesta: src('05-armar-respuesta.js'),
   finalizar: src('06-finalizar.js'),
-  armarTwiml: src('08-armar-twiml.js'),
   orquestador: src('14-orquestador.js').replace('__PROMPT_ORQUESTADOR__', JSON.stringify(promptOrquestador)),
   procesarOrquestador: src('15-procesar-orquestador.js'),
   procesarTranscripcion: src('16-procesar-transcripcion.js'),
   adjuntarFoto: src('17-adjuntar-foto.js'),
+  armarSaliente: src('18-armar-saliente.js'),
+  bloqueado: src('19-bloqueado.js'),
 };
 
 // Contexto de jerga para Whisper: mejora mucho el reconocimiento del vocabulario HSE
@@ -87,7 +88,21 @@ const nodes = [
     webhookId: 'hse-tarjeta-digital-whatsapp',
     parameters: { httpMethod: 'POST', path: 'whatsapp', responseMode: 'responseNode', options: {} },
   },
-  codeNode('Preparar contexto', code.prepararContexto, [200, 300]),
+  {
+    // Twilio corta a los 15 s: se responde un ACK vacío al instante y la respuesta
+    // real sale después por la API REST ("Enviar por WhatsApp"). Nunca más silencio
+    // porque el LLM tardó.
+    name: 'ACK a Twilio',
+    type: 'n8n-nodes-base.respondToWebhook',
+    typeVersion: 1.1,
+    position: [180, 300],
+    parameters: {
+      respondWith: 'text',
+      responseBody: '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+      options: { responseHeaders: { entries: [{ name: 'Content-Type', value: 'text/xml' }] } },
+    },
+  },
+  codeNode('Preparar contexto', code.prepararContexto, [360, 300]),
   {
     name: 'Traer sesión',
     type: 'n8n-nodes-base.httpRequest',
@@ -103,16 +118,18 @@ const nodes = [
     typeVersion: 3.2,
     position: [800, 300],
     parameters: {
-      rules: { values: ['foto', 'audio', 'confirmar', 'adjuntar_foto'].map(switchRule) },
-      options: { fallbackOutput: 'extra' }, // 5.ª salida: orquestador (todo el resto)
+      rules: { values: ['foto', 'audio', 'confirmar', 'adjuntar_foto', 'bloqueado'].map(switchRule) },
+      options: { fallbackOutput: 'extra' }, // 6.ª salida: orquestador (todo el resto)
     },
   },
+  codeNode('Mensaje bloqueado', code.bloqueado, [1000, 990]),
   // --- Flujo A: foto de la tarjeta ---
   {
     name: 'Descargar foto',
     type: 'n8n-nodes-base.httpRequest',
     typeVersion: 4.2,
     position: [1000, 0],
+    onError: 'continueRegularOutput', // sin binario, "Foto a base64" degrada con aviso
     parameters: {
       method: 'GET',
       url: '={{ $json.mediaUrl }}',
@@ -130,6 +147,7 @@ const nodes = [
     type: 'n8n-nodes-base.httpRequest',
     typeVersion: 4.2,
     position: [1000, 150],
+    onError: 'continueRegularOutput', // Whisper fallará y "Procesar transcripción" avisa
     parameters: {
       method: 'GET',
       url: '={{ $json.mediaUrl }}',
@@ -170,6 +188,7 @@ const nodes = [
     type: 'n8n-nodes-base.httpRequest',
     typeVersion: 4.2,
     position: [1000, 840],
+    onError: 'continueRegularOutput', // "Adjuntar foto" avisa si no hay binario
     parameters: {
       method: 'GET',
       url: '={{ $json.mediaUrl }}',
@@ -219,16 +238,26 @@ const nodes = [
       options: { timeout: 30000 },
     },
   },
-  codeNode('Armar TwiML', code.armarTwiml, [2050, 300]),
+  codeNode('Armar respuesta saliente', code.armarSaliente, [2050, 300]),
   {
-    name: 'Responder a Twilio',
-    type: 'n8n-nodes-base.respondToWebhook',
-    typeVersion: 1.1,
+    name: 'Enviar por WhatsApp',
+    type: 'n8n-nodes-base.httpRequest',
+    typeVersion: 4.2,
     position: [2250, 300],
+    onError: 'continueRegularOutput',
     parameters: {
-      respondWith: 'text',
-      responseBody: '={{ $json.xml }}',
-      options: { responseHeaders: { entries: [{ name: 'Content-Type', value: 'text/xml' }] } },
+      method: 'POST',
+      url: "=https://api.twilio.com/2010-04-01/Accounts/{{ $env.TWILIO_SID }}/Messages.json",
+      sendHeaders: true,
+      headerParameters: { parameters: [{ name: 'Authorization', value: '={{ $json.auth }}' }] },
+      sendBody: true,
+      contentType: 'form-urlencoded',
+      bodyParameters: { parameters: [
+        { name: 'From', value: '={{ $json.fromBot }}' },
+        { name: 'To', value: '={{ $json.to }}' },
+        { name: 'Body', value: '={{ $json.texto }}' },
+      ] },
+      options: { timeout: 30000 },
     },
   },
 ].map((n, i) => ({ id: `nodo-${String(i + 1).padStart(2, '0')}`, ...n }));
@@ -246,7 +275,8 @@ const connect = (pairs) => Object.fromEntries(pairs.map(([from, tos]) => {
 }));
 
 const connections = connect([
-  ['Webhook Twilio', [main('Preparar contexto')]],
+  ['Webhook Twilio', [main('ACK a Twilio')]],
+  ['ACK a Twilio', [main('Preparar contexto')]],
   ['Preparar contexto', [main('Traer sesión')]],
   ['Traer sesión', [main('Router')]],
   ['Router', [main('Switch Acción')]],
@@ -255,8 +285,10 @@ const connections = connect([
     { ...main('Descargar audio'), _out: 1 },       // audio
     { ...main('Finalizar observación'), _out: 2 }, // confirmar
     { ...main('Descargar adjunto'), _out: 3 },     // adjuntar_foto (evidencia post-folio)
-    { ...main('Orquestador'), _out: 4 },           // fallback: orquestador (todo el resto)
+    { ...main('Mensaje bloqueado'), _out: 4 },     // bloqueado (pausa anti-abuso, con aviso)
+    { ...main('Orquestador'), _out: 5 },           // fallback: orquestador (todo el resto)
   ]],
+  ['Mensaje bloqueado', [main('Persistir')]],
   ['Descargar adjunto', [main('Adjuntar foto')]],
   ['Adjuntar foto', [main('Persistir')]],
   ['Descargar foto', [main('Foto a base64')]],
@@ -276,8 +308,8 @@ const connections = connect([
   ['Procesar orquestador', [main('Persistir')]],
   ['Armar respuesta', [main('Persistir')]],
   ['Finalizar observación', [main('Persistir')]],
-  ['Persistir', [main('Armar TwiML')]],
-  ['Armar TwiML', [main('Responder a Twilio')]],
+  ['Persistir', [main('Armar respuesta saliente')]],
+  ['Armar respuesta saliente', [main('Enviar por WhatsApp')]],
 ]);
 
 const workflow = {

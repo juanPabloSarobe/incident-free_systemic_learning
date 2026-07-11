@@ -33,6 +33,9 @@ const systemContent = PROMPT_ORQUESTADOR +
   JSON.stringify(datosLimpios, null, 2) +
   (ctx.transcripcion
     ? '\n\nNota: el mensaje actual proviene de un AUDIO transcripto automáticamente; puede traer errores de reconocimiento (nombres de lugares, números). Interpretalo con criterio.'
+    : '') +
+  (ctx.user && ctx.user.rechazos > 0
+    ? `\n\n## Antecedentes del usuario\nTiene ${ctx.user.rechazos} rechazo(s) reciente(s) por contenido no válido. Si este mensaje tampoco parece una observación de seguridad real, rechazá directamente, sin re-entrevistar ni seguirle la corriente.`
     : '');
 
 // Armar los mensajes: system + historial + mensaje actual

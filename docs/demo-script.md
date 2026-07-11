@@ -85,3 +85,4 @@ Mandar `hola` → el bot explica las dos vías y aclara que es anónimo.
 | `hola` | mensaje de ayuda |
 | `OK` (con resumen pendiente) | folio asignado |
 | corrección en vez de OK: `el lugar era la locación 45` | resumen actualizado |
+| 3 mensajes de broma seguidos (ej. `los pibes vaguean en el sillón`) | 1º: rechazo amable · 2º: rechazo + advertencia · 3º: pausa de 30 min informando la hora; mientras dure, todo mensaje recibe el aviso (nunca silencio) |

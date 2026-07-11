@@ -52,13 +52,17 @@ historial.push({ role: 'assistant', content: out.mensaje || '' });
 // acotar historial para no crecer indefinidamente
 while (historial.length > 12) historial.shift();
 
-let reply, session;
+let reply, session, flag = null;
 
 if (out.accion === 'rechazar') {
-  // contenido no válido: cerrar sesión, no persistir observación
-  reply = out.mensaje ||
-    '😊 Esto no parece una observación de seguridad. Si necesitás ayuda, hablá con tu supervisor de HSE.';
+  // contenido no válido: cerrar sesión, registrar el strike y avisar según reincidencia.
+  // {{AVISO_RECHAZO}} se resuelve DESPUÉS de persistir, cuando la API devuelve el contador
+  // (2º rechazo: advertencia; 3º: pausa de 30 min con hora). Nunca silencio.
+  reply = (out.mensaje ||
+    '😊 Esto no parece una observación de seguridad. Si necesitás ayuda, hablá con tu supervisor de HSE.') +
+    '{{AVISO_RECHAZO}}';
   session = null;
+  flag = { razon: 'contenido_dudoso' };
 } else if (out.accion === 'confirmar') {
   // tenemos lo esencial: armar resumen determinístico y pedir OK
   // red de seguridad: nunca confirmar "sin categoría"
@@ -98,4 +102,6 @@ if (ctx.transcripcion) {
   reply = `🎙️ Escuché: «${t}»\n\n${reply}`;
 }
 
-return [{ json: { persist: { reporter_hash: ctx.hash, session, reply } } }];
+const persist = { reporter_hash: ctx.hash, session, reply };
+if (flag) persist.flag = flag;
+return [{ json: { persist } }];

@@ -2,8 +2,15 @@
 // al LLM de visión (Groq, API compatible con OpenAI) con el prompt de extracción.
 const PROMPT_EXTRACCION = __PROMPT_EXTRACCION__;
 
-const buf = await this.helpers.getBinaryDataBuffer(0, 'data');
 const ctx = $('Router').first().json;
+
+let buf = null;
+try { buf = await this.helpers.getBinaryDataBuffer(0, 'data'); } catch (e) { /* descarga fallida */ }
+if (!buf) {
+  // sin imagen no hay nada que extraer: el pedido inválido hace que "Armar respuesta"
+  // conteste su fallback amable (nunca silencio)
+  return [{ json: { ...ctx, fotoB64: null, groqBody: {} } }];
+}
 const fotoB64 = buf.toString('base64');
 
 const groqBody = {

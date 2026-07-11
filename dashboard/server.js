@@ -162,23 +162,42 @@ app.get('/export.csv', (_req, res) => {
 // API interna para el bot (n8n)
 // ---------------------------------------------------------------------------
 
-// Devuelve la sesión conversacional vigente (o null si no existe / venció el TTL).
+// Estado anti-abuso del usuario. Si el bloqueo temporal ya venció, se levanta acá
+// (auto-desbloqueo perezoso: se evalúa en cada consulta).
+function estadoUsuario(hash) {
+  const u = db.prepare(
+    'SELECT estado, desbloqueado_en, reportes_rechazados FROM user_stats WHERE reporter_hash = ?'
+  ).get(hash);
+  if (!u) return { estado: 'activo', rechazos: 0, desbloqueado_en: null };
+  if (u.estado === 'bloqueado_temporal' && u.desbloqueado_en &&
+      u.desbloqueado_en <= db.prepare("SELECT datetime('now') AS t").get().t) {
+    db.prepare(`UPDATE user_stats SET estado = 'activo', reportes_rechazados = 0,
+      razon_bloqueo = NULL, desbloqueado_en = NULL WHERE reporter_hash = ?`).run(hash);
+    return { estado: 'activo', rechazos: 0, desbloqueado_en: null };
+  }
+  return { estado: u.estado, rechazos: u.reportes_rechazados, desbloqueado_en: u.desbloqueado_en };
+}
+
+// Devuelve la sesión conversacional vigente (o null si no existe / venció el TTL)
+// junto con el estado anti-abuso del usuario.
 app.get('/api/sessions/:hash', (req, res) => {
+  const user = estadoUsuario(req.params.hash);
   const s = db.prepare('SELECT * FROM sessions WHERE reporter_hash = ?').get(req.params.hash);
-  if (!s) return res.json({ session: null });
+  if (!s) return res.json({ session: null, user });
   const edadMin = db.prepare(
     "SELECT (julianday('now') - julianday(?)) * 24 * 60 AS m"
   ).get(s.updated_at).m;
   if (edadMin > SESSION_TTL_MIN) {
     db.prepare('DELETE FROM sessions WHERE reporter_hash = ?').run(req.params.hash);
-    return res.json({ session: null });
+    return res.json({ session: null, user });
   }
   res.json({
     session: {
       estado_flujo: s.estado_flujo,
       datos: JSON.parse(s.datos_parciales_json),
       updated_at: s.updated_at
-    }
+    },
+    user
   });
 });
 
@@ -211,6 +230,11 @@ app.post('/api/bot/persist', (req, res) => {
   }
 
   let out = { ok: true, foto_path, reply: reply ?? null };
+
+  // rechazo del orquestador: registrar el strike; el resultado viaja al bot para avisar
+  if (req.body.flag) {
+    out.flag = flagUser(reporter_hash, req.body.flag.razon, req.body.flag.observacion_id || null);
+  }
 
   // adjuntar evidencia a una observación ya registrada (ventana post-folio)
   if (foto_para && foto_path) {
@@ -303,16 +327,14 @@ app.post('/api/bot/persist', (req, res) => {
 // API: Reportes fraudulentos (flagged)
 // ---------------------------------------------------------------------------
 
-app.post('/api/bot/flag', (req, res) => {
-  const { reporter_hash, razon, observacion_id } = req.body || {};
-  if (!reporter_hash) return res.status(400).json({ error: 'falta reporter_hash' });
-
+// Registra un rechazo: 3er rechazo dentro del ciclo → bloqueo temporal de 30 min.
+// Devuelve el estado resultante para que el bot AVISE (2º: advertencia; 3º: pausa con hora).
+function flagUser(reporter_hash, razon, observacion_id) {
   db.prepare(`
     INSERT INTO flagged_reports (reporter_hash, razon, observacion_id)
     VALUES (?, ?, ?)
   `).run(reporter_hash, razon || 'contenido_dudoso', observacion_id || null);
 
-  // Incrementar contador de rechazos y bloquear si hay reincidencia
   db.prepare(`
     INSERT INTO user_stats (reporter_hash, total_reportes, reportes_rechazados, last_report_time)
     VALUES (?, 1, 1, datetime('now'))
@@ -334,7 +356,20 @@ app.post('/api/bot/flag', (req, res) => {
       END
   `).run(reporter_hash);
 
-  res.json({ ok: true });
+  const u = db.prepare(
+    'SELECT estado, desbloqueado_en, reportes_rechazados FROM user_stats WHERE reporter_hash = ?'
+  ).get(reporter_hash);
+  return {
+    rechazos: u.reportes_rechazados,
+    bloqueado: u.estado === 'bloqueado_temporal',
+    desbloqueado_en: u.desbloqueado_en
+  };
+}
+
+app.post('/api/bot/flag', (req, res) => {
+  const { reporter_hash, razon, observacion_id } = req.body || {};
+  if (!reporter_hash) return res.status(400).json({ error: 'falta reporter_hash' });
+  res.json({ ok: true, ...flagUser(reporter_hash, razon, observacion_id) });
 });
 
 app.get('/api/flagged', (_req, res) => {

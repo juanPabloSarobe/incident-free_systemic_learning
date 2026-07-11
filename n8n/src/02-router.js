@@ -3,6 +3,7 @@
 // audio, confirmación explícita de un resumen pendiente, u orquestador (todo el resto).
 const ctx = $('Preparar contexto').first().json;
 let session = $input.first().json.session || null;
+const user = $input.first().json.user || { estado: 'activo', rechazos: 0 };
 const t = (ctx.text || '').toLowerCase().trim();
 
 const esConfirmacion = /^(ok|oka|okey|si|sí|dale|confirmo|listo|va|perfecto|correcto)\b/.test(t);
@@ -18,7 +19,9 @@ if (session && session.estado_flujo === 'awaiting_photos') {
 }
 
 let accion;
-if (ctx.hasMedia && ventanaFotos) {
+if (user.estado === 'bloqueado_temporal') {
+  accion = 'bloqueado';                              // pausa anti-abuso: SIEMPRE se avisa, nunca silencio
+} else if (ctx.hasMedia && ventanaFotos) {
   accion = 'adjuntar_foto';                          // evidencia para el folio recién registrado
 } else if (ctx.hasMedia) {
   accion = 'foto';                                   // Flujo A: foto de la tarjeta de papel
@@ -30,4 +33,4 @@ if (ctx.hasMedia && ventanaFotos) {
   accion = 'orquestador';                            // TODO lo demás lo maneja el LLM
 }
 
-return [{ json: { ...ctx, session, accion } }];
+return [{ json: { ...ctx, session, user, accion } }];
